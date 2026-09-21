@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
   Award,
-  CalendarDays,
   Crown,
   Download,
   Filter,
+  MapPin,
   Medal,
   Search,
   TrendingUp,
@@ -12,12 +12,12 @@ import {
   Trophy,
   Users,
 } from 'lucide-react';
-import type { BancoRegistros, Colaborador } from '../types';
-import { toBR } from '../utils';
+import type { BancoRegistros, Carro, Colaborador, FiltroRegionalId } from '../types';
+import { regionalDoColab, toBR } from '../utils';
+import FiltroMes from './FiltroMes';
 import {
   exportarRankingCSV,
   listarMesesDisponiveis,
-  motivosDoMes,
   rankingDoMes,
   resumosPorMes,
   rotuloMes,
@@ -27,6 +27,9 @@ import {
 interface Props {
   registros: BancoRegistros;
   colabs: Colaborador[];
+  carros?: Carro[];
+  regionalFiltro?: FiltroRegionalId;
+  onRegionalChange?: (v: FiltroRegionalId) => void;
   onVerDia: (dataISO: string) => void;
 }
 
@@ -60,20 +63,66 @@ function medalha(i: number): string {
   return 'bg-slate-100 dark:bg-slate-800 text-slate-500';
 }
 
-export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
+const OPCOES_REGIONAIS: Array<{ id: FiltroRegionalId; label: string; grad: string }> = [
+  { id: 'todas', label: 'Todas', grad: 'from-indigo-600 to-violet-600' },
+  { id: 'ribas', label: '📍 Ribas', grad: 'from-emerald-600 to-teal-600' },
+  { id: 'agua-clara', label: '📍 Água Clara', grad: 'from-sky-600 to-cyan-600' },
+];
+
+export default function IndicadoresTab({ registros, colabs, carros = [], regionalFiltro, onRegionalChange, onVerDia }: Props) {
   const meses = useMemo(() => listarMesesDisponiveis(registros), [registros]);
   const [mesSel, setMesSel] = useState<string>(meses[0] ?? '');
   const mesEfetivo = meses.includes(mesSel) ? mesSel : (meses[0] ?? '');
   const [busca, setBusca] = useState('');
   const [ord, setOrd] = useState<Ordenacao>('faltas');
   const [somenteFaltas, setSomenteFaltas] = useState(true);
+  const [regionalLocal, setRegionalLocal] = useState<FiltroRegionalId>('todas');
+
+  const regionalAtiva: FiltroRegionalId = regionalFiltro ?? regionalLocal;
+  const setRegional = (v: FiltroRegionalId) => {
+    if (onRegionalChange) onRegionalChange(v);
+    else setRegionalLocal(v);
+  };
+
+  const colabsFiltrados = useMemo(() => {
+    if (regionalAtiva === 'todas') return colabs;
+    return colabs.filter((c) => regionalDoColab(c, carros) === regionalAtiva);
+  }, [colabs, carros, regionalAtiva]);
+
+  const idsDaRegional = useMemo(() => new Set(colabsFiltrados.map((c) => c.id)), [colabsFiltrados]);
 
   const ranking = useMemo(
-    () => (mesEfetivo ? rankingDoMes(registros, colabs, mesEfetivo) : []),
-    [registros, colabs, mesEfetivo],
+    () => (mesEfetivo ? rankingDoMes(registros, colabsFiltrados, mesEfetivo) : []),
+    [registros, colabsFiltrados, mesEfetivo],
   );
-  const resumos = useMemo(() => resumosPorMes(registros, colabs), [registros, colabs]);
-  const motivos = useMemo(() => (mesEfetivo ? motivosDoMes(registros, mesEfetivo) : []), [registros, mesEfetivo]);
+  const resumos = useMemo(() => resumosPorMes(registros, colabsFiltrados), [registros, colabsFiltrados]);
+  const totaisFiltroMes = useMemo(() => {
+    const map: Record<string, { faltas: number; subs: number; afastados: number; dias: number }> = {};
+    for (const r of resumos) {
+      map[r.mesKey] = { faltas: r.totalFaltas, subs: r.totalSubs, afastados: r.totalAfastados ?? 0, dias: r.diasComLancamento };
+    }
+    return map;
+  }, [resumos]);
+
+  const motivos = useMemo(() => {
+    if (!mesEfetivo) return [] as Array<{ motivo: string; qtd: number }>;
+    const map = new Map<string, number>();
+    for (const [data, dia] of Object.entries(registros)) {
+      if (!data.startsWith(mesEfetivo)) continue;
+      for (const [colabId, reg] of Object.entries(dia)) {
+        if (!idsDaRegional.has(colabId)) continue;
+        if (reg.situacao === 'presente') continue;
+        const m = reg.situacao === 'afastado'
+          ? `Afastado ${((reg.afastadoTipo ?? reg.motivo ?? 'INSS') as string).trim() || 'INSS'}`
+          : (reg.motivo ?? '').trim() === '' ? 'Sem motivo informado' : (reg.motivo as string).trim();
+        map.set(m, (map.get(m) ?? 0) + 1);
+      }
+    }
+    return [...map.entries()]
+      .map(([motivo, qtd]) => ({ motivo, qtd }))
+      .sort((a, b) => b.qtd - a.qtd)
+      .slice(0, 8);
+  }, [registros, mesEfetivo, idsDaRegional]);
   const maxMotivo = Math.max(1, ...motivos.map((m) => m.qtd));
 
   const filtrado = useMemo(() => {
@@ -95,7 +144,10 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
   const maxFaltas = Math.max(1, ...ranking.map((r) => r.faltas));
   const totalFaltasMes = ranking.reduce((s, r) => s + r.faltas, 0);
   const totalSubsMes = ranking.reduce((s, r) => s + r.substituicoes, 0);
+  const totalAfastMes = ranking.reduce((s, r) => s + (r.afastamentos ?? 0), 0);
   const pessoasComFalta = ranking.filter((r) => r.faltas > 0).length;
+
+  const rotuloRegional = regionalAtiva === 'todas' ? 'Todas as regionais' : regionalAtiva === 'ribas' ? 'Regional de Ribas' : 'Regional de Água Clara';
 
   if (meses.length === 0) {
     return (
@@ -109,38 +161,57 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
 
   return (
     <div className="anim-fade-up space-y-5">
-      {/* Seletor de mês */}
-      <div className="glass rounded-3xl p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-2 text-sm font-extrabold">
-            <CalendarDays className="h-4 w-4 text-indigo-500" /> MÊS DE REFERÊNCIA
-          </span>
-          <div className="flex flex-1 flex-wrap gap-2">
-            {meses.map((m) => (
+      {/* Filtro por regional */}
+      <div className="glass rounded-3xl p-4 no-print">
+        <span className="mb-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <MapPin className="h-3.5 w-3.5 text-indigo-500" />
+          Filtrar ranking por regional
+        </span>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {OPCOES_REGIONAIS.map((op) => {
+            const ativo = regionalAtiva === op.id;
+            return (
               <button
-                key={m}
-                onClick={() => setMesSel(m)}
-                className={`rounded-xl px-3.5 py-2 text-xs font-extrabold uppercase tracking-wide transition-all ${
-                  m === mesEfetivo
-                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/25'
-                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                key={op.id}
+                type="button"
+                onClick={() => setRegional(op.id)}
+                aria-pressed={ativo}
+                className={`rounded-2xl px-3 py-2.5 text-xs font-extrabold uppercase tracking-wide transition-all duration-300 hover:-translate-y-0.5 ${
+                  ativo
+                    ? `bg-gradient-to-r ${op.grad} text-white shadow-lg`
+                    : 'bg-slate-100 text-slate-500 hover:shadow-md dark:bg-slate-800 dark:text-slate-300'
                 }`}
               >
-                {rotuloMes(m)}
+                {op.label}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
-        <h2 className="mt-3 bg-gradient-to-r from-indigo-500 via-violet-500 to-amber-500 bg-clip-text text-xl font-extrabold text-transparent sm:text-2xl">
-          🏆 Quem mais faltou — {rotuloMesLongo(mesEfetivo)}
+        <p className="mt-2 text-[11px] font-semibold text-slate-400">
+          Exibindo: <b className="text-indigo-500">{rotuloRegional}</b> · {colabsFiltrados.length} pessoas no escopo
+        </p>
+      </div>
+
+      {/* Seletor de mês — pesquisa por mês reutilizável */}
+      <FiltroMes
+        meses={meses}
+        value={mesEfetivo}
+        onChange={(v) => setMesSel(v === 'todos' ? (meses[0] ?? '') : v)}
+        permitirTodos={false}
+        totais={totaisFiltroMes}
+      />
+      <div className="glass rounded-3xl p-4">
+        <h2 className="bg-gradient-to-r from-indigo-500 via-violet-500 to-amber-500 bg-clip-text text-xl font-extrabold text-transparent sm:text-2xl">
+          🏆 Quem mais faltou — {rotuloMesLongo(mesEfetivo)} · {rotuloRegional}
         </h2>
       </div>
 
       {/* KPIs do mês */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
           { label: 'Faltas no mês', value: String(totalFaltasMes), icon: '🔴', border: '!border-t-red-500' },
           { label: 'Substituições', value: String(totalSubsMes), icon: '🔵', border: '!border-t-sky-500' },
+          { label: 'Afastados', value: String(totalAfastMes), icon: '🟠', border: '!border-t-orange-500' },
           { label: 'Pessoas c/ falta', value: String(pessoasComFalta), icon: '👥', border: '!border-t-amber-500' },
           {
             label: 'Campeão do mês',
@@ -162,7 +233,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
       {top3.length > 0 && (
         <div className="glass rounded-3xl p-5">
           <h3 className="mb-4 flex items-center gap-2 font-extrabold">
-            <Crown className="h-5 w-5 text-amber-500" /> PÓDIO DO MÊS
+            <Crown className="h-5 w-5 text-amber-500" /> PÓDIO DO MÊS — {rotuloRegional.toUpperCase()}
           </h3>
           <div className="grid gap-3 md:grid-cols-3">
             {top3.map((r, i) => (
@@ -234,7 +305,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
             className={`rounded-xl px-3 py-2 text-xs font-bold ${somenteFaltas ? 'bg-red-500/15 text-red-500 border border-red-500/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}
             title="Alternar entre só faltas ou faltas + substituições"
           >
-            {somenteFaltas ? '🔴 só faltas' : '🔴+🔵 faltas e subs'}
+            {somenteFaltas ? '🔴 só faltas' : '🔴+🔵+🟠 todas ausências'}
           </button>
           <button
             onClick={() => mesEfetivo && exportarRankingCSV(mesEfetivo, filtrado)}
@@ -267,7 +338,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
                 </div>
                 <div className="shrink-0 text-right">
                   <p className="text-lg font-extrabold leading-none text-red-500">🔴 {r.faltas}</p>
-                  <p className="mt-0.5 text-[11px] font-semibold text-slate-500">🔵 {r.substituicoes} · {r.taxaFalta}%</p>
+                  <p className="mt-0.5 text-[11px] font-semibold text-slate-500">🔵 {r.substituicoes}{(r.afastamentos ?? 0) > 0 ? ` · 🟠 ${r.afastamentos}` : ''} · {r.taxaFalta}%</p>
                 </div>
                 <button
                   onClick={() => r.ultimaFalta && onVerDia(r.ultimaFalta)}
@@ -281,7 +352,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
           </div>
         ) : (
           <p className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-4 text-center text-sm text-emerald-600 dark:text-emerald-300">
-            Nenhuma falta em {rotuloMesLongo(mesEfetivo)}. 🎉
+            Nenhuma falta em {rotuloMesLongo(mesEfetivo)} na {rotuloRegional}. 🎉
           </p>
         )}
       </div>
@@ -292,7 +363,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
           <h3 className="mb-1 flex items-center gap-2 font-extrabold">
             <TriangleAlert className="h-5 w-5 text-amber-500" /> MOTIVOS NO MÊS
           </h3>
-          <p className="mb-3 text-xs text-slate-500">O que mais gerou ausência em {rotuloMes(mesEfetivo)}.</p>
+          <p className="mb-3 text-xs text-slate-500">O que mais gerou ausência em {rotuloMes(mesEfetivo)} · {rotuloRegional}.</p>
           <div className="space-y-2.5">
             {motivos.map((m) => (
               <div key={m.motivo}>
@@ -317,7 +388,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
           <h3 className="mb-1 flex items-center gap-2 font-extrabold">
             <Medal className="h-5 w-5 text-indigo-500" /> CAMPEÕES DE CADA MÊS
           </h3>
-          <p className="mb-3 text-xs text-slate-500">Quem mais faltou em cada mês com lançamento.</p>
+          <p className="mb-3 text-xs text-slate-500">Quem mais faltou em cada mês com lançamento · {rotuloRegional}.</p>
           <div className="space-y-2">
             {resumos.map((r) => (
               <button
@@ -359,7 +430,7 @@ export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
           <TrendingUp className="h-5 w-5 text-emerald-500" /> REINCIDÊNCIA — FALTAS POR MÊS (TOP 5)
         </h3>
         <p className="mb-4 flex items-center gap-1.5 text-xs text-slate-500">
-          <Users className="h-3.5 w-3.5" /> Quem aparece em vários meses seguidos merece atenção.
+          <Users className="h-3.5 w-3.5" /> Quem aparece em vários meses seguidos merece atenção · {rotuloRegional}.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] text-left text-xs">

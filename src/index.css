@@ -56,6 +56,19 @@ body {
 .anim-pop { animation: popIn 0.25s ease-out both; }
 .falta-pulse { animation: pulse-ring 1.6s infinite; }
 
+/* Logo da empresa — topo do app */
+.logo-empresa {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  animation: fadeUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.logo-empresa:hover {
+  transform: scale(1.05) rotate(-1deg);
+  box-shadow: 0 10px 25px -8px rgba(79, 70, 229, 0.55);
+}
+.logo-empresa--fallback {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
@@ -71,6 +84,48 @@ body {
   border: 2px dashed rgba(148, 163, 184, 0.25);
   border-radius: 1.5rem;
   pointer-events: none;
+}
+
+/* Desenho minimalista do carro — sem brilhos, sem espelhos, sem texturas */
+.carro-topview {
+  background: transparent;
+}
+.carro-topview-assento {
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.carro-topview-assento:hover {
+  transform: translateY(-1px);
+}
+@keyframes carroEntrada {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.anim-carro-entrada { animation: carroEntrada 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Cor por unidade (aba Operação) — faixa + brilho suave */
+.unidade-bar {
+  position: relative;
+  overflow: hidden;
+}
+.unidade-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-100%);
+  animation: unidadeShine 3.2s ease-in-out infinite;
+}
+@keyframes unidadeShine {
+  0% { transform: translateX(-100%); }
+  55%, 100% { transform: translateX(100%); }
+}
+
+/* Cor por equipe (aba Operação) — EQ01 e EQ02 na mesma cor da Equipe 1 (índigo) */
+.equipe-pill {
+  letter-spacing: 0.08em;
+}
+.equipe-fileira {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 @media print {

@@ -1,4 +1,170 @@
-import type { BancoRegistros, Carro, Colaborador, EquipeInfo, EquipeStatus, Indicadores, RegistrosDoDia } from './types';
+import type { BancoRegistros, Carro, Colaborador, EquipeInfo, EquipeStatus, FiltroRegionalId, Indicadores, RegionalId, RegistrosDoDia, Situacao } from './types';
+import { FUNCOES_COLABORADOR } from './types';
+
+// ---------- Funções de colaborador ----------
+/** Mapa de migração das funções removidas (Auxiliar, Motorista, Líder de Equipe, Operador). */
+const FUNCOES_REMOVIDAS_MAP: Record<string, string> = {
+  auxiliar: 'Auxiliar de Inventário Florestal',
+  motorista: 'Auxiliar de Inventário Florestal',
+  operador: 'Auxiliar de Inventário Florestal',
+  'lider de equipe': 'Líder de Inventário Florestal',
+};
+
+/** Normaliza variações sem acento / caixa diferente para o nome oficial da função. */
+export function normalizarFuncao(v: unknown): string {
+  const txt = String(v ?? '').trim();
+  if (!txt) return 'Auxiliar de Inventário Florestal';
+  const semAcento = txt
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const achada = (FUNCOES_COLABORADOR as readonly string[]).find((f) => {
+    const n = f
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+    return n === semAcento;
+  });
+  if (achada) return achada;
+  // Migra funções antigas removidas para as oficiais atuais
+  if (FUNCOES_REMOVIDAS_MAP[semAcento]) return FUNCOES_REMOVIDAS_MAP[semAcento];
+  // Aceita legado / valores livres mantendo o texto original capitalizado
+  return txt;
+}
+
+/** Migra lista de colaboradores com funções antigas para as funções oficiais atuais. */
+export function migrarFuncoesColabs(colabs: Colaborador[]): Colaborador[] {
+  return colabs.map((c) => ({ ...c, funcao: normalizarFuncao(c.funcao) }));
+}
+
+// ---------- Regionais ----------
+export const REGIONAIS: Array<{ id: RegionalId; nome: string; curto: string }> = [
+  { id: 'ribas', nome: 'Regional de Ribas', curto: 'Ribas' },
+  { id: 'agua-clara', nome: 'Regional de Água Clara', curto: 'Água Clara' },
+];
+
+export function regionalLabel(id: RegionalId | string | undefined | null): string {
+  if (id === 'agua-clara') return 'Regional de Água Clara';
+  if (id === 'ribas') return 'Regional de Ribas';
+  return 'Regional de Ribas';
+}
+
+export function regionalCurto(id: RegionalId | string | undefined | null): string {
+  if (id === 'agua-clara') return 'Água Clara';
+  return 'Ribas';
+}
+
+export function normalizaRegional(v: unknown): RegionalId {
+  return v === 'agua-clara' ? 'agua-clara' : 'ribas';
+}
+
+export function regionalDoCarro(carro: Carro): RegionalId {
+  return normalizaRegional(carro.regional);
+}
+
+export function regionalDoColab(
+  colab: Colaborador,
+  carros: Carro[],
+): RegionalId {
+  if (colab.regional === 'ribas' || colab.regional === 'agua-clara') return colab.regional;
+  const carro = carros.find((c) => c.posicoes.includes(colab.id));
+  if (carro) return regionalDoCarro(carro);
+  return 'ribas';
+}
+
+/** Migra dados antigos (sem regional) distribuindo por prefixo/posição para preview imediato. */
+export function migrarCarrosComRegional(carros: Carro[], colabs: Colaborador[]): Carro[] {
+  return carros.map((carro, idx) => {
+    if (carro.regional === 'ribas' || carro.regional === 'agua-clara') return carro;
+    // Heurística: tenta herdar da maioria dos titulares; senão alterna por índice (metade Ribas, metade Água Clara)
+    const votos = carro.posicoes.map((id) => colabs.find((c) => c.id === id)?.regional);
+    const agua = votos.filter((v) => v === 'agua-clara').length;
+    const rib = votos.filter((v) => v === 'ribas').length;
+    if (agua !== rib) return { ...carro, regional: agua > rib ? 'agua-clara' : 'ribas' };
+    const metade = Math.ceil(carros.length / 2);
+    return { ...carro, regional: idx < metade ? 'ribas' : 'agua-clara' };
+  });
+}
+
+export function migrarColabsComRegional(colabs: Colaborador[], carros: Carro[]): Colaborador[] {
+  const mapaCarro = new Map<string, RegionalId>();
+  for (const carro of carros) {
+    for (const id of carro.posicoes) {
+      mapaCarro.set(id, normalizaRegional(carro.regional));
+    }
+  }
+  return colabs.map((c, idx) => {
+    if (c.regional === 'ribas' || c.regional === 'agua-clara') return c;
+    const herdada = mapaCarro.get(c.id);
+    if (herdada) return { ...c, regional: herdada };
+    // Reservas sem vínculo: alterna para equilibrar
+    return { ...c, regional: idx % 2 === 0 ? 'ribas' : 'agua-clara' };
+  });
+}
+
+export function filtrarCarrosPorRegional(carros: Carro[], filtro: FiltroRegionalId): Carro[] {
+  if (filtro === 'todas') return carros;
+  return carros.filter((c) => regionalDoCarro(c) === filtro);
+}
+
+export function filtrarColabsPorRegional(
+  colabs: Colaborador[],
+  carros: Carro[],
+  filtro: FiltroRegionalId,
+): Colaborador[] {
+  if (filtro === 'todas') return colabs;
+  return colabs.filter((c) => regionalDoColab(c, carros) === filtro);
+}
+
+export function contarPorRegional(
+  carros: Carro[],
+  colabs: Colaborador[],
+): Record<FiltroRegionalId, { carros: number; colabs: number }> {
+  const ribasCarros = carros.filter((c) => regionalDoCarro(c) === 'ribas').length;
+  const aguaCarros = carros.filter((c) => regionalDoCarro(c) === 'agua-clara').length;
+  const ribasColabs = colabs.filter((c) => regionalDoColab(c, carros) === 'ribas').length;
+  const aguaColabs = colabs.filter((c) => regionalDoColab(c, carros) === 'agua-clara').length;
+  return {
+    todas: { carros: carros.length, colabs: colabs.length },
+    ribas: { carros: ribasCarros, colabs: ribasColabs },
+    'agua-clara': { carros: aguaCarros, colabs: aguaColabs },
+  };
+}
+
+export function historicoFaltasPorRegional(
+  registros: BancoRegistros,
+  carros: Carro[],
+  colabs: Colaborador[],
+  filtro: FiltroRegionalId,
+): Array<{ data: string; faltas: number; subs: number; afastados: number }> {
+  if (filtro === 'todas') return historicoFaltas(registros);
+  const idsDaRegional = new Set(
+    filtrarColabsPorRegional(colabs, carros, filtro).map((c) => c.id),
+  );
+  // Também inclui qualquer titular dos carros da regional (garante consistência com Operação)
+  for (const carro of filtrarCarrosPorRegional(carros, filtro)) {
+    for (const id of carro.posicoes) idsDaRegional.add(id);
+  }
+  return Object.keys(registros)
+    .sort()
+    .slice(-14)
+    .map((data) => {
+      const dia = registros[data];
+      let faltas = 0;
+      let subs = 0;
+      let afastados = 0;
+      for (const [colabId, reg] of Object.entries(dia)) {
+        if (!idsDaRegional.has(colabId)) continue;
+        if (reg.situacao === 'falta') faltas += 1;
+        else if (reg.situacao === 'substituicao') subs += 1;
+        else if (reg.situacao === 'afastado' || reg.situacao === 'ferias') afastados += 1;
+      }
+      return { data, faltas, subs, afastados };
+    });
+}
 
 export const todayKey = (): string => {
   const d = new Date();
@@ -20,13 +186,129 @@ export const initials = (nome: string): string =>
 
 export const uid = (p = 'id'): string => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 
-export function situacaoDe(colabId: string, dia: RegistrosDoDia | undefined): 'presente' | 'falta' | 'substituicao' {
+export function situacaoDe(colabId: string, dia: RegistrosDoDia | undefined): Situacao {
   if (!dia || !dia[colabId]) return 'presente';
-  return dia[colabId].situacao;
+  return dia[colabId].situacao ?? 'presente';
+}
+
+/** Rótulo amigável da situação (inclui Afastado INSS). */
+export function situacaoLabel(s: Situacao, motivo?: string): string {
+  if (s === 'presente') return 'Presente';
+  if (s === 'falta') return 'Falta';
+  if (s === 'substituicao') return 'Substituição';
+  if (s === 'ferias') return 'Férias';
+  if (s === 'afastado') {
+    const m = (motivo ?? '').trim().toUpperCase();
+    if (m === 'INSS' || m === '') return 'Afastado INSS';
+    return `Afastado ${motivo}`;
+  }
+  return 'Presente';
+}
+
+/** True para qualquer ausência que tira o titular da operação (falta, afastado, férias). */
+export function isAusencia(s: Situacao): boolean {
+  return s === 'falta' || s === 'afastado' || s === 'ferias';
 }
 
 export function titulares(carros: Carro[]): string[] {
-  return carros.flatMap((c) => c.posicoes);
+  return carros.flatMap((c) => c.posicoes).filter(Boolean);
+}
+
+/** Slot vago? (string vazia, nula ou indefinida) */
+export function isVago(id: unknown): boolean {
+  return !id || (typeof id === 'string' && id.trim() === '');
+}
+
+/** Encontra o carro + índice da posição onde a pessoa está alocada. */
+export function carroDaPessoa(
+  carros: Carro[],
+  colabId: string,
+): { carro: Carro; posIndex: number } | null {
+  if (!colabId) return null;
+  for (const carro of carros) {
+    const idx = carro.posicoes.findIndex((p) => p === colabId);
+    if (idx >= 0) return { carro, posIndex: idx };
+  }
+  return null;
+}
+
+/** Lista pessoas livres (sem carro) para alocar — exclui inativos e quem já está em algum carro. */
+export function pessoasLivres(colabs: Colaborador[], carros: Carro[]): Colaborador[] {
+  const emUso = new Set(titulares(carros));
+  return colabs.filter((c) => c.status !== 'inativo' && !emUso.has(c.id));
+}
+
+/** Conta vagas (slots vazios) de um carro. */
+export function vagasDoCarro(carro: Carro): number {
+  return carro.posicoes.filter((p) => isVago(p)).length;
+}
+
+/**
+ * Aloca uma pessoa em um carro/posição.
+ * - Remove automaticamente do carro anterior (troca de equipe).
+ * - Retorna lista nova de carros (imutável).
+ */
+export function alocarPessoa(
+  carros: Carro[],
+  colabId: string,
+  carroDestinoId: string,
+  posIndex: number,
+): Carro[] {
+  if (!colabId || posIndex < 0 || posIndex > 3) return carros;
+  return carros.map((c) => {
+    // remove de onde estava
+    let pos = c.posicoes.map((p) => (p === colabId ? '' : p)) as [string, string, string, string];
+    // aloca no destino
+    if (c.id === carroDestinoId) {
+      const nova = [...pos] as [string, string, string, string];
+      nova[posIndex] = colabId;
+      pos = nova;
+    }
+    if (pos.every((p, i) => p === c.posicoes[i])) return c;
+    return { ...c, posicoes: pos };
+  });
+}
+
+/** Remove (deixa vago) uma posição de um carro. */
+export function removerDoCarro(carros: Carro[], carroId: string, posIndex: number): Carro[] {
+  return carros.map((c) => {
+    if (c.id !== carroId) return c;
+    const nova = [...c.posicoes] as [string, string, string, string];
+    nova[posIndex] = '';
+    return { ...c, posicoes: nova };
+  });
+}
+
+/** Troca duas pessoas de posição (mesmo carro ou entre carros). */
+export function trocarPosicoes(
+  carros: Carro[],
+  a: { carroId: string; posIndex: number },
+  b: { carroId: string; posIndex: number },
+): Carro[] {
+  const ca = carros.find((c) => c.id === a.carroId);
+  const cb = carros.find((c) => c.id === b.carroId);
+  if (!ca || !cb) return carros;
+  const va = ca.posicoes[a.posIndex] ?? '';
+  const vb = cb.posicoes[b.posIndex] ?? '';
+  return carros.map((c) => {
+    if (c.id === a.carroId && c.id === b.carroId) {
+      const nova = [...c.posicoes] as [string, string, string, string];
+      nova[a.posIndex] = vb;
+      nova[b.posIndex] = va;
+      return { ...c, posicoes: nova };
+    }
+    if (c.id === a.carroId) {
+      const nova = [...c.posicoes] as [string, string, string, string];
+      nova[a.posIndex] = vb;
+      return { ...c, posicoes: nova };
+    }
+    if (c.id === b.carroId) {
+      const nova = [...c.posicoes] as [string, string, string, string];
+      nova[b.posIndex] = va;
+      return { ...c, posicoes: nova };
+    }
+    return c;
+  });
 }
 
 export function equipesDoDia(carros: Carro[]): EquipeInfo[] {
@@ -52,6 +334,7 @@ export function equipesDoDia(carros: Carro[]): EquipeInfo[] {
 
 export function statusEquipe(m1: string, m2: string, dia: RegistrosDoDia | undefined): EquipeStatus {
   const ok = (id: string) => {
+    if (isVago(id)) return false;
     const s = situacaoDe(id, dia);
     return s === 'presente' || s === 'substituicao';
   };
@@ -61,21 +344,24 @@ export function statusEquipe(m1: string, m2: string, dia: RegistrosDoDia | undef
   return 'sem-equipe';
 }
 
-export function statusCarro(carro: Carro, dia: RegistrosDoDia | undefined): { presentes: number; label: string; classe: 'ok' | 'warn' | 'bad' } {
+export function statusCarro(carro: Carro, dia: RegistrosDoDia | undefined): { presentes: number; vagos: number; label: string; classe: 'ok' | 'warn' | 'bad' } {
+  const vagos = vagasDoCarro(carro);
   const presentes = carro.posicoes.filter((id) => {
+    if (isVago(id)) return false;
     const s = situacaoDe(id, dia);
     return s === 'presente' || s === 'substituicao';
   }).length;
-  if (presentes === 4) return { presentes, label: '2 equipes completas', classe: 'ok' };
-  if (presentes === 3) return { presentes, label: '1 completa + 1 incompleta', classe: 'warn' };
+  if (presentes === 4) return { presentes, vagos, label: '2 equipes completas', classe: 'ok' };
+  if (presentes === 3) return { presentes, vagos, label: '1 completa + 1 incompleta', classe: 'warn' };
   if (presentes === 2) {
     const eq1 = statusEquipe(carro.posicoes[0], carro.posicoes[1], dia);
     const eq2 = statusEquipe(carro.posicoes[2], carro.posicoes[3], dia);
-    if (eq1 === 'completa' || eq2 === 'completa') return { presentes, label: '1 equipe completa', classe: 'ok' };
-    return { presentes, label: '2 equipes incompletas', classe: 'warn' };
+    if (eq1 === 'completa' || eq2 === 'completa') return { presentes, vagos, label: '1 equipe completa', classe: 'ok' };
+    return { presentes, vagos, label: '2 equipes incompletas', classe: 'warn' };
   }
-  if (presentes === 1) return { presentes, label: 'Equipe incompleta', classe: 'warn' };
-  return { presentes, label: 'Sem equipe', classe: 'bad' };
+  if (presentes === 1) return { presentes, vagos, label: vagos > 0 ? `Equipe incompleta · ${vagos} vaga${vagos === 1 ? '' : 's'}` : 'Equipe incompleta', classe: 'warn' };
+  if (vagos > 0) return { presentes, vagos, label: `${vagos} vaga${vagos === 1 ? '' : 's'} em aberto`, classe: 'bad' };
+  return { presentes, vagos, label: 'Sem equipe', classe: 'bad' };
 }
 
 export function calcIndicadores(
@@ -88,14 +374,15 @@ export function calcIndicadores(
   let presentes = 0;
   let faltas = 0;
   let substituicoes = 0;
+  let afastados = 0;
   for (const id of tids) {
     const s = situacaoDe(id, dia);
     if (s === 'presente') presentes += 1;
     else if (s === 'falta') faltas += 1;
     else if (s === 'substituicao') substituicoes += 1;
+    else if (s === 'afastado' || s === 'ferias') afastados += 1;
+    else presentes += 1;
   }
-  presentes += substituicoes; // substituto conta como presente operacionalmente? Não — mantemos separado. Corrige:
-  presentes = tids.length - faltas - substituicoes;
 
   const equipes = equipesDoDia(carros);
   let completas = 0;
@@ -119,6 +406,7 @@ export function calcIndicadores(
     presentes,
     faltas,
     substituicoes,
+    afastados,
     totalEquipes: equipes.length,
     completas,
     incompletas,
@@ -158,12 +446,13 @@ function escHtml(s: string): string {
 export function exportarExcel(
   dataISO: string,
   indicadores: Indicadores,
-  linhas: Array<{ data: string; carro: string; equipe: string; colaborador: string; funcao: string; situacao: string; substituto: string; hora: string }>,
+  linhas: Array<{ data: string; regional?: string; carro: string; equipe: string; colaborador: string; funcao: string; situacao: string; substituto: string; hora: string }>,
 ): void {
+  const temRegional = linhas.some((l) => Boolean(l.regional));
   const detalheRows = linhas
     .map(
       (l) =>
-        `<tr><td>${escHtml(l.data)}</td><td>${escHtml(l.carro)}</td><td>${escHtml(l.equipe)}</td><td>${escHtml(l.colaborador)}</td><td>${escHtml(l.funcao)}</td><td>${escHtml(l.situacao)}</td><td>${escHtml(l.substituto)}</td><td>${escHtml(l.hora)}</td></tr>`,
+        `<tr><td>${escHtml(l.data)}</td>${temRegional ? `<td>${escHtml(l.regional ?? '—')}</td>` : ''}<td>${escHtml(l.carro)}</td><td>${escHtml(l.equipe)}</td><td>${escHtml(l.colaborador)}</td><td>${escHtml(l.funcao)}</td><td>${escHtml(l.situacao)}</td><td>${escHtml(l.substituto)}</td><td>${escHtml(l.hora)}</td></tr>`,
     )
     .join('');
   const resumoRows = [
@@ -171,6 +460,7 @@ export function exportarExcel(
     ['Presentes', indicadores.presentes],
     ['Faltas', indicadores.faltas],
     ['Substituições', indicadores.substituicoes],
+    ['Afastados', indicadores.afastados ?? 0],
     ['Total de equipes', indicadores.totalEquipes],
     ['Equipes completas', indicadores.completas],
     ['Equipes incompletas', indicadores.incompletas],
@@ -186,7 +476,7 @@ export function exportarExcel(
 <h3>Resumo Diário</h3>
 <table border="1"><tr><th>Indicador</th><th>Quantidade</th></tr>${resumoRows}</table>
 <h3>Detalhamento</h3>
-<table border="1"><tr><th>Data</th><th>Carro</th><th>Equipe</th><th>Colaborador</th><th>Função</th><th>Situação</th><th>Substituto</th><th>Hora</th></tr>${detalheRows}</table>
+<table border="1"><tr><th>Data</th>${temRegional ? '<th>Regional</th>' : ''}<th>Carro</th><th>Equipe</th><th>Colaborador</th><th>Função</th><th>Situação</th><th>Substituto</th><th>Hora</th></tr>${detalheRows}</table>
 </body></html>`;
   const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -236,6 +526,7 @@ th{background:#f1f5f9}
 <div class="card"><span>Presentes</span><b>${indicadores.presentes}</b></div>
 <div class="card"><span>Faltas</span><b>${indicadores.faltas}</b></div>
 <div class="card"><span>Substituições</span><b>${indicadores.substituicoes}</b></div>
+<div class="card"><span>Afastados</span><b>${indicadores.afastados ?? 0}</b></div>
 <div class="card"><span>Equipes</span><b>${indicadores.totalEquipes}</b></div>
 <div class="card"><span>Completas</span><b>${indicadores.completas}</b></div>
 <div class="card"><span>Incompletas</span><b>${indicadores.incompletas}</b></div>
@@ -250,21 +541,168 @@ th{background:#f1f5f9}
   w.focus();
 }
 
-// ---------- Importação simples de CSV/Excel-colado ----------
-export function parseColaboradoresCSV(text: string): Array<Pick<Colaborador, 'nome' | 'cpf' | 'matricula' | 'funcao'>> {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+// ---------- Importação da planilha padrão: Regional | Nome | Função ----------
+export interface ColaboradorImportRow {
+  nome: string;
+  cpf: string;
+  matricula: string;
+  funcao: string;
+  regional: RegionalId;
+  regionalRaw: string;
+  linha: number;
+}
+
+function semAcentoLower(v: unknown): string {
+  return String(v ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Normaliza qualquer variação de regional para o id oficial. */
+export function normalizaRegionalImport(v: unknown): { id: RegionalId; raw: string } {
+  const raw = String(v ?? '').trim();
+  const n = semAcentoLower(raw).replace(/[-_]/g, ' ');
+  if (/(agua\s*clara)/.test(n) || n === 'agua clara' || n.includes('agua')) {
+    if (n.includes('agua') || n.includes('clara')) return { id: 'agua-clara', raw };
+  }
+  if (/(ribas)/.test(n) || n.includes('riba')) return { id: 'ribas', raw };
+  // códigos curtos comuns
+  if (n === 'ac') return { id: 'agua-clara', raw };
+  if (n === 'rb' || n === 'r') return { id: 'ribas', raw };
+  // fallback: vazio ou desconhecido -> ribas (mantém compatibilidade)
+  return { id: 'ribas', raw };
+}
+
+function detectarDelimitador(header: string): string {
+  const candidatos = [';', ',', '\t', '|'];
+  let melhor = ';';
+  let melhorQtd = -1;
+  for (const d of candidatos) {
+    const qtd = header.split(d).length;
+    if (qtd > melhorQtd) {
+      melhorQtd = qtd;
+      melhor = d;
+    }
+  }
+  return melhor;
+}
+
+/** Divide linha respeitando aspas duplas ("campo; com; ponto-e-vírgula"). */
+function splitLinhaCSV(line: string, delim: string): string[] {
+  const out: string[] = [];
+  let atual = '';
+  let emAspas = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (emAspas && line[i + 1] === '"') {
+        atual += '"';
+        i++;
+      } else {
+        emAspas = !emAspas;
+      }
+    } else if (ch === delim && !emAspas) {
+      out.push(atual.trim());
+      atual = '';
+    } else {
+      atual += ch;
+    }
+  }
+  out.push(atual.trim());
+  return out.map((s) => s.replace(/^"|"$/g, '').trim());
+}
+
+function indiceColuna(headers: string[], sinonimos: string[]): number {
+  const norm = headers.map((h) => semAcentoLower(h).replace(/[-_]/g, ' '));
+  for (const s of sinonimos) {
+    const idx = norm.findIndex((h) => h === s || h.includes(s));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Parser oficial da planilha de importação.
+ * Formato padrão (novo): `Regional;Nome;Função`
+ * Também aceita legado: `Nome;CPF;Função;Matrícula` e variações de ordem/caixa/acentos/delimitador.
+ */
+export function parseColaboradoresCSV(text: string): ColaboradorImportRow[] {
+  const semBOM = String(text ?? '').replace(/^\uFEFF/, '');
+  const lines = semBOM.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0) return [];
-  const hasHeader = /nome/i.test(lines[0]);
+
+  const primeiraLinha = lines[0];
+  const delim = detectarDelimitador(primeiraLinha);
+  const headersRaw = splitLinhaCSV(primeiraLinha, delim);
+  const headersNorm = headersRaw.map((h) => semAcentoLower(h));
+
+  const temNome = headersNorm.some((h) => ['nome', 'colaborador', 'funcionario', 'name'].some((s) => h.includes(s)));
+  const temFuncao = headersNorm.some((h) => ['funcao', 'cargo', 'role', 'occupation'].some((s) => h.includes(s)));
+  const temRegional = headersNorm.some((h) => ['regional', 'regiao', 'base', 'filial', 'unidade'].some((s) => h.includes(s)));
+  const hasHeader = temNome || temFuncao || temRegional || /nome/i.test(primeiraLinha);
+
+  const headers = hasHeader ? headersRaw : [];
   const body = hasHeader ? lines.slice(1) : lines;
-  return body.slice(0, 500).map((line) => {
-    const parts = line.split(/[,;|\t]/).map((p) => p.trim());
-    return {
-      nome: parts[0] || 'Sem nome',
-      cpf: (parts[1] || '').replace(/\D/g, '').slice(0, 11) || '00000000000',
-      funcao: parts[2] || 'Auxiliar',
-      matricula: parts[3] || String(Math.floor(1000 + Math.random() * 9000)),
-    };
+
+  let idxRegional = hasHeader ? indiceColuna(headers, ['regional', 'regiao', 'base', 'filial', 'unidade']) : 0;
+  let idxNome = hasHeader ? indiceColuna(headers, ['nome', 'colaborador', 'funcionario', 'name']) : 1;
+  let idxFuncao = hasHeader ? indiceColuna(headers, ['funcao', 'cargo', 'role']) : 2;
+  const idxCpf = hasHeader ? indiceColuna(headers, ['cpf', 'documento']) : -1;
+  const idxMat = hasHeader ? indiceColuna(headers, ['matricula', 're', 'chapa']) : -1;
+
+  // Sem cabeçalho: assume ordem nova Regional | Nome | Função (ou legado de 4 colunas)
+  if (!hasHeader) {
+    const colsPrimeira = splitLinhaCSV(primeiraLinha, delim).length;
+    if (colsPrimeira >= 4) {
+      // legado posicional: Nome | CPF | Função | Matrícula
+      idxNome = 0; idxFuncao = 2; idxRegional = -1;
+    } else {
+      idxRegional = 0; idxNome = 1; idxFuncao = 2;
+    }
+  } else if (idxNome < 0 && idxFuncao < 0 && idxRegional < 0) {
+    // cabeçalho não reconhecido -> posicional novo
+    idxRegional = 0; idxNome = 1; idxFuncao = 2;
+  } else {
+    // completa índices faltantes com fallback posicional do novo layout
+    if (idxRegional < 0 && headersRaw.length === 3) idxRegional = 0;
+    if (idxNome < 0) idxNome = headersRaw.length === 3 ? 1 : 0;
+    if (idxFuncao < 0) idxFuncao = headersRaw.length === 3 ? 2 : 2;
+  }
+
+  const out: ColaboradorImportRow[] = [];
+  body.slice(0, 2000).forEach((line, i) => {
+    const parts = splitLinhaCSV(line, delim);
+    if (parts.every((p) => !p)) return;
+    const get = (idx: number): string => (idx >= 0 && idx < parts.length ? parts[idx].trim() : '');
+
+    const nome = get(idxNome).replace(/^"|"$/g, '').trim();
+    if (!nome || /^sep *=/i.test(nome)) return;
+
+    const funcaoRaw = get(idxFuncao);
+    const regionalRaw = idxRegional >= 0 ? get(idxRegional) : '';
+    const { id: regional } = normalizaRegionalImport(regionalRaw);
+
+    const cpf = idxCpf >= 0
+      ? get(idxCpf).replace(/\D/g, '').slice(0, 11) || '00000000000'
+      : (parts[3] && /^\d/.test(parts[3]) ? parts[3].replace(/\D/g, '').slice(0, 11) : '00000000000') || '00000000000';
+    const matricula = idxMat >= 0 && get(idxMat)
+      ? get(idxMat)
+      : String(1000 + Math.floor(Math.random() * 9000)) + String(i).padStart(2, '0');
+
+    out.push({
+      nome,
+      cpf: cpf || '00000000000',
+      matricula,
+      funcao: normalizarFuncao(funcaoRaw || 'Auxiliar de Inventário Florestal'),
+      regional,
+      regionalRaw,
+      linha: i + (hasHeader ? 2 : 1),
+    });
   });
+  return out;
 }
 
 export function loadLS<T>(key: string, fallback: T): T {
@@ -285,7 +723,7 @@ export function saveLS(key: string, value: unknown): void {
   }
 }
 
-export function historicoFaltas(registros: BancoRegistros): Array<{ data: string; faltas: number; subs: number }> {
+export function historicoFaltas(registros: BancoRegistros): Array<{ data: string; faltas: number; subs: number; afastados: number }> {
   return Object.keys(registros)
     .sort()
     .slice(-14)
@@ -296,6 +734,80 @@ export function historicoFaltas(registros: BancoRegistros): Array<{ data: string
         data,
         faltas: vals.filter((v) => v.situacao === 'falta').length,
         subs: vals.filter((v) => v.situacao === 'substituicao').length,
+        afastados: vals.filter((v) => v.situacao === 'afastado' || v.situacao === 'ferias').length,
       };
     });
+}
+
+// ---------- Filtro por mês (pesquisa mensal) ----------
+export type MesFiltro = string; // 'todos' | 'yyyy-MM'
+
+const MES_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function isMesKey(v: string): boolean {
+  return MES_KEY_RE.test(v);
+}
+
+export function normalizarMesFiltro(v: string): MesFiltro {
+  const t = v.trim();
+  if (t === '' || t.toLowerCase() === 'todos') return 'todos';
+  if (isMesKey(t)) return t;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t.slice(0, 7);
+  return 'todos';
+}
+
+export function mesChaveAtual(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Lista meses (yyyy-MM) que possuem lançamento, mais recente primeiro. */
+export function listarMesesComLancamento(registros: BancoRegistros): string[] {
+  const set = new Set<string>();
+  for (const data of Object.keys(registros)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(data)) set.add(data.slice(0, 7));
+  }
+  return [...set].sort().reverse();
+}
+
+/** Totais de um mês para badges/resumos. */
+export function totaisDoMes(
+  registros: BancoRegistros,
+  mes: MesFiltro,
+): { faltas: number; subs: number; afastados: number; dias: number } {
+  if (mes === 'todos') {
+    let faltas = 0;
+    let subs = 0;
+    let afastados = 0;
+    for (const dia of Object.values(registros)) {
+      for (const r of Object.values(dia)) {
+        if (r.situacao === 'falta') faltas += 1;
+        else if (r.situacao === 'substituicao') subs += 1;
+        else if (r.situacao === 'afastado' || r.situacao === 'ferias') afastados += 1;
+      }
+    }
+    return { faltas, subs, afastados, dias: Object.keys(registros).length };
+  }
+  let faltas = 0;
+  let subs = 0;
+  let afastados = 0;
+  let dias = 0;
+  for (const [data, dia] of Object.entries(registros)) {
+    if (!data.startsWith(mes)) continue;
+    dias += 1;
+    for (const r of Object.values(dia)) {
+      if (r.situacao === 'falta') faltas += 1;
+      else if (r.situacao === 'substituicao') subs += 1;
+      else if (r.situacao === 'afastado' || r.situacao === 'ferias') afastados += 1;
+    }
+  }
+  return { faltas, subs, afastados, dias };
+}
+
+/** Mapa de totais por mês (para badges do FiltroMes). */
+export function totaisPorMes(registros: BancoRegistros): Record<string, { faltas: number; subs: number; afastados: number; dias: number }> {
+  const out: Record<string, { faltas: number; subs: number; afastados: number; dias: number }> = {};
+  for (const mes of listarMesesComLancamento(registros)) {
+    out[mes] = totaisDoMes(registros, mes);
+  }
+  return out;
 }

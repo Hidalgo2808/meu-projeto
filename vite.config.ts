@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 // Configuração do Vite restaurada — plugins válidos, sem imports inválidos.
 // Preview em http://127.0.0.1:8080
 export default defineConfig({
-  // base relativa: permite publicar em Vercel, Netlify, GitHub Pages e qualquer hospedagem estática
+  // base relativa: funciona em qualquer hospedagem estática local
   base: './',
   plugins: [react()],
   build: {
