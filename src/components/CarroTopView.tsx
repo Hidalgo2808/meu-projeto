@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { BancoRegistros, Carro, Colaborador } from '../types';
-import { initials, isVago, situacaoDe, statusEquipe } from '../utils';
+import { initials, isVago, ocupadosDoCarro, quantEquipesDoCarro, situacaoDe, statusEquipeMembros } from '../utils';
 import { equipeDePosicao, temaEquipe } from '../equipeTheme';
 
 interface CarroTopViewProps {
@@ -89,7 +89,22 @@ function Assento({
   }
 
   const c = colabs.find((x) => x.id === colabId);
-  if (!c) return null;
+  // CORREÇÃO: id fantasma (pessoa excluída) vira vaga — nunca conta como ocupante
+  if (!c) {
+    return (
+      <button
+        onClick={() => onAdd(posGlobal)}
+        title={`${equipe.id} · Vaga ${posGlobal + 1} — pessoa removida, toque para repor`}
+        className={`flex w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-300 bg-transparent px-2 py-3 text-slate-400 transition-colors dark:border-slate-700 ${equipe.vagaButton}`}
+      >
+        <Plus className="h-4 w-4" />
+        <span className="text-[11px] font-medium">Vago</span>
+        <span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-widest ${equipe.badge}`}>
+          {equipe.id}
+        </span>
+      </button>
+    );
+  }
   const reg = dia?.[colabId];
   const sit = (reg?.situacao ?? situacaoDe(colabId, dia)) as Sit;
   const sub = reg?.substitutoId ? colabs.find((x) => x.id === reg.substitutoId) : undefined;
@@ -150,8 +165,14 @@ function FileiraHeader({ equipeId, status }: { equipeId: 'EQ01' | 'EQ02'; status
  * Detalhes (função, motivo, substituto) ficam no tooltip / modal.
  */
 export default function CarroTopView({ carro, colabs, dia, onPick, onAdd }: CarroTopViewProps) {
-  const eq1 = statusEquipe(carro.posicoes[0], carro.posicoes[1], dia);
-  const eq2 = statusEquipe(carro.posicoes[2], carro.posicoes[3], dia);
+  // CORREÇÃO: lugares vazios e ids fantasmas (pessoa excluída) nunca contam
+  const idsValidos = new Set(colabs.map((c) => c.id));
+  const ocupados = ocupadosDoCarro(carro).filter((id) => idsValidos.has(id));
+  const qtdEquipes = ocupados.length === 0 ? 0 : ocupados.length <= 3 ? 1 : 2;
+  void quantEquipesDoCarro;
+  const eq1 = statusEquipeMembros([carro.posicoes[0], carro.posicoes[1]], dia);
+  const eq2 = statusEquipeMembros([carro.posicoes[2], carro.posicoes[3]], dia);
+  const eqUnica = statusEquipeMembros(ocupados, dia);
   const t1 = temaEquipe('EQ01');
   const t2 = temaEquipe('EQ02');
 
@@ -160,28 +181,47 @@ export default function CarroTopView({ carro, colabs, dia, onPick, onAdd }: Carr
       {/* Para-brisa — única referência de orientação */}
       <div className="mx-10 mb-3 h-1.5 rounded-full bg-slate-300/70 dark:bg-slate-700" title="Frente do veículo" />
       <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-        Frente
+        Frente · {ocupados.length} pessoa(s) = {qtdEquipes} equipe(s)
       </p>
 
-      {/* EQ01 — índigo (mesma cor da Equipe 1) */}
-      <FileiraHeader equipeId="EQ01" status={eq1} />
-      <div className={`rounded-xl border border-transparent p-1.5 ${t1.softBg} ${t1.frame}`}>
-        <div className="grid grid-cols-2 gap-2">
-          <Assento posGlobal={0} colabId={carro.posicoes[0]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
-          <Assento posGlobal={1} colabId={carro.posicoes[1]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
-        </div>
-      </div>
+      {qtdEquipes <= 1 ? (
+        <>
+          {/* REGRA: 2 ou 3 pessoas = 1 EQUIPE ÚNICA */}
+          <FileiraHeader equipeId="EQ01" status={eqUnica} />
+          <p className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-indigo-500">
+            Equipe única · {ocupados.length} pessoa(s) = 1 equipe
+          </p>
+          <div className={`rounded-xl border border-transparent p-1.5 ${t1.softBg} ${t1.frame}`}>
+            <div className="grid grid-cols-2 gap-2">
+              <Assento posGlobal={0} colabId={carro.posicoes[0]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+              <Assento posGlobal={1} colabId={carro.posicoes[1]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+              <Assento posGlobal={2} colabId={carro.posicoes[2]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+              <Assento posGlobal={3} colabId={carro.posicoes[3]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* REGRA: 4 pessoas = 2 EQUIPES */}
+          <FileiraHeader equipeId="EQ01" status={eq1} />
+          <div className={`rounded-xl border border-transparent p-1.5 ${t1.softBg} ${t1.frame}`}>
+            <div className="grid grid-cols-2 gap-2">
+              <Assento posGlobal={0} colabId={carro.posicoes[0]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+              <Assento posGlobal={1} colabId={carro.posicoes[1]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+            </div>
+          </div>
 
-      <div className="mx-1 my-3 border-t border-dashed border-slate-200 dark:border-slate-700" />
+          <div className="mx-1 my-3 border-t border-dashed border-slate-200 dark:border-slate-700" />
 
-      {/* EQ02 — mesma cor da Equipe 1 (índigo) */}
-      <FileiraHeader equipeId="EQ02" status={eq2} />
-      <div className={`rounded-xl border border-transparent p-1.5 ${t2.softBg} ${t2.frame}`}>
-        <div className="grid grid-cols-2 gap-2">
-          <Assento posGlobal={2} colabId={carro.posicoes[2]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
-          <Assento posGlobal={3} colabId={carro.posicoes[3]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
-        </div>
-      </div>
+          <FileiraHeader equipeId="EQ02" status={eq2} />
+          <div className={`rounded-xl border border-transparent p-1.5 ${t2.softBg} ${t2.frame}`}>
+            <div className="grid grid-cols-2 gap-2">
+              <Assento posGlobal={2} colabId={carro.posicoes[2]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+              <Assento posGlobal={3} colabId={carro.posicoes[3]} colabs={colabs} dia={dia} onPick={onPick} onAdd={onAdd} />
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="mx-10 mt-3 h-1.5 rounded-full bg-slate-200/70 dark:bg-slate-700/60" title="Traseira do veículo" />
     </div>

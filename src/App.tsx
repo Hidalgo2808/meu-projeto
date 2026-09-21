@@ -20,7 +20,7 @@ import { MOCK_CARROS, MOCK_COLABORADORES, mockHistorico } from './mock';
 import {
   alocarPessoa, calcIndicadores, carroDaPessoa, exportarExcel, exportarPDF, filtrarCarrosPorRegional, filtrarColabsPorRegional,
   historicoFaltasPorRegional, initials, isVago, listaFaltas, listarMesesComLancamento,
-  loadLS, migrarCarrosComRegional, migrarColabsComRegional, migrarFuncoesColabs, normalizarFuncao, nowHM, parseColaboradoresCSV, regionalCurto,
+  loadLS, migrarCarrosComRegional, migrarColabsComRegional, migrarFuncoesColabs, normalizarFuncao, nowHM, ocupadosDoCarro, parseColaboradoresCSV, quantEquipesDoCarro, regionalCurto,
   regionalDoCarro, regionalDoColab, regionalLabel, removerDoCarro, saveLS, situacaoLabel, statusCarro, statusEquipe,
   titulares, toBR, todayKey, totaisDoMes, totaisPorMes, uid, vagasDoCarro,
 } from './utils';
@@ -194,6 +194,8 @@ export default function App() {
     const rows: Array<{ data: string; regional: string; carro: string; equipe: string; colaborador: string; funcao: string; situacao: string; substituto: string; hora: string }> = [];
     for (const carro of carrosDaRegional) {
       carro.posicoes.forEach((id, idx) => {
+        // CORREÇÃO: pula lugares vazios — não entram no Excel/PDF nem na contagem
+        if (isVago(id)) return;
         const c = colabById(id);
         if (!c) return;
         const r = dia?.[id];
@@ -343,6 +345,26 @@ export default function App() {
                   <div className="rounded-xl bg-slate-100 dark:bg-slate-800 p-3">🚙 Operando <b className="float-right">{ind.carrosOperando}/{ind.totalCarros}</b></div>
                   <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3">⛔ Sem equipe <b className="float-right">{ind.carrosSemEquipe}</b></div>
                 </div>
+                <div className="mt-2 rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-indigo-500/10 via-violet-500/10 to-transparent p-3">
+                  <p className="mb-2 text-[11px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400">🚗 Ocupação dos carros</p>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-2 py-2.5">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Fechados · 4p</p>
+                      <p className="text-2xl font-extrabold text-emerald-500">{ind.carrosCom4 ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl bg-sky-500/10 border border-sky-500/30 px-2 py-2.5">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Com 3p</p>
+                      <p className="text-2xl font-extrabold text-sky-500">{ind.carrosCom3 ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-2 py-2.5">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Com 2p</p>
+                      <p className="text-2xl font-extrabold text-amber-500">{ind.carrosCom2 ?? 0}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setTab('indicadores')} className="mt-2 w-full text-center text-xs font-bold text-indigo-500 hover:underline">
+                    ver detalhe por carro nos Indicadores →
+                  </button>
+                </div>
                 <button onClick={() => setShowFechamento(true)} className="btn-primary mt-3 w-full">
                   <Lock className="h-4 w-4" /> FECHAR DIA · EXPORTAR
                 </button>
@@ -413,7 +435,8 @@ export default function App() {
             {/* Grade de carros — card com cor da unidade */}
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {carrosFiltrados.map((carro, i) => {
-                const st = statusCarro(carro, dia);
+                // CORREÇÃO: passa colabs para ignorar vagas vazias e ids fantasmas
+                const st = statusCarro(carro, dia, colabs);
                 const regId = regionalDoCarro(carro);
                 const tema = temaUnidade(regId);
                 return (
@@ -440,9 +463,9 @@ export default function App() {
                             </span>
                           </div>
                         </div>
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${st.classe === 'ok' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : st.classe === 'warn' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                        <span title={`${st.alocados} pessoa(s) alocada(s) = ${st.qtdEquipes} equipe(s) · ${st.label}`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${st.classe === 'ok' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : st.classe === 'warn' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
                           <i className={`h-1.5 w-1.5 rounded-full ${st.classe === 'ok' ? 'bg-emerald-500' : st.classe === 'warn' ? 'bg-amber-500' : 'bg-red-500'}`} />
-                          {st.presentes}/4
+                          {st.presentes}/{st.alocados} · {st.qtdEquipes} eq.
                         </span>
                       </div>
                       {/* Desenho minimalista do carro — detalhes no tooltip/modal */}
@@ -505,7 +528,7 @@ export default function App() {
         {/* ============ COLABORADORES ============ */}
         {tab === 'colaboradores' && (
           <ColaboradoresTab
-            colabs={colabs} setColabs={setColabs} carros={carros} regionalFiltro={regionalFiltro} onRegionalChange={setRegionalFiltro}
+            colabs={colabs} setColabs={setColabs} carros={carros} setCarros={setCarros} regionalFiltro={regionalFiltro} onRegionalChange={setRegionalFiltro}
             dia={dia} dataSel={dataSel}
             onNew={() => { setEditColab(null); setShowNovoColab(true); }}
             onEdit={(c) => { setEditColab(c); setShowNovoColab(true); }}
@@ -677,6 +700,9 @@ export default function App() {
                 ['Afastados', `🟠 ${ind.afastados}`, 'bg-orange-500/10 border border-orange-500/30'],
                 [`Equipes (${ind.totalEquipes})`, `🟢${ind.completas} 🟡${ind.incompletas} 🔴${ind.semEquipe}`, 'bg-slate-100 dark:bg-slate-800'],
                 [`Carros (${ind.totalCarros})`, `🚙 ${ind.carrosOperando} oper.`, 'bg-slate-100 dark:bg-slate-800'],
+                ['Fechados · 4 pessoas', `✅ ${ind.carrosCom4 ?? 0}`, 'bg-emerald-500/10 border border-emerald-500/30'],
+                ['Carros com 3 pessoas', `🚗 ${ind.carrosCom3 ?? 0}`, 'bg-sky-500/10 border border-sky-500/30'],
+                ['Carros com 2 pessoas', `🚗 ${ind.carrosCom2 ?? 0}`, 'bg-amber-500/10 border border-amber-500/30'],
               ].map(([k, v, cls]) => (
                 <div key={k as string} className={`rounded-2xl p-3 text-center ${cls}`}>
                   <p className="text-[11px] font-bold uppercase text-slate-500">{k}</p>
@@ -994,9 +1020,9 @@ function StatusModal({ colab, carro, dia, disponiveis, onClose, onPresente, onFa
 }
 
 // ---------------- Aba colaboradores ----------------
-function ColaboradoresTab({ colabs, setColabs, carros, regionalFiltro, onRegionalChange, onNew, onEdit, dia, dataSel }: {
+function ColaboradoresTab({ colabs, setColabs, carros, setCarros, regionalFiltro, onRegionalChange, onNew, onEdit, dia, dataSel }: {
   colabs: Colaborador[]; setColabs: (fn: (p: Colaborador[]) => Colaborador[]) => void;
-  carros: Carro[]; regionalFiltro: FiltroRegionalId; onRegionalChange: (v: FiltroRegionalId) => void;
+  carros: Carro[]; setCarros?: (fn: (p: Carro[]) => Carro[]) => void; regionalFiltro: FiltroRegionalId; onRegionalChange: (v: FiltroRegionalId) => void;
   onNew: () => void; onEdit: (c: Colaborador) => void;
   dia?: BancoRegistros[string]; dataSel?: string;
 }) {
@@ -1141,7 +1167,17 @@ function ColaboradoresTab({ colabs, setColabs, carros, regionalFiltro, onRegiona
             </div>
             <div className="flex flex-col gap-1.5">
               <button onClick={() => onEdit(c)} className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 hover:bg-indigo-500 hover:text-white" title="Editar"><Pencil className="h-3.5 w-3.5" /></button>
-              <button onClick={() => { if (confirm(`Excluir ${c.nome}?`)) setColabs((p) => p.filter((x) => x.id !== c.id)); }} className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 hover:bg-red-500 hover:text-white" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
+              <button onClick={() => {
+                if (!confirm(`Excluir ${c.nome}?`)) return;
+                // CORREÇÃO: ao excluir, o lugar vira vaga vazia — não conta mais em nenhuma contagem
+                setColabs((p) => p.filter((x) => x.id !== c.id));
+                if (setCarros) {
+                  setCarros((prev) => prev.map((car) => {
+                    if (!car.posicoes.includes(c.id)) return car;
+                    return { ...car, posicoes: car.posicoes.map((p) => (p === c.id ? '' : p)) as [string, string, string, string] };
+                  }));
+                }
+              }} className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 hover:bg-red-500 hover:text-white" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           </div>
           );
@@ -1225,10 +1261,22 @@ function CarrosTab({ carros, setCarros, colabs, regionalFiltro, onNew, onEdit }:
   colabs: Colaborador[]; regionalFiltro: FiltroRegionalId; onNew: () => void; onEdit: (c: Carro) => void;
 }) {
   const lista = regionalFiltro === 'todas' ? carros : carros.filter((c) => regionalDoCarro(c) === regionalFiltro);
+  // CORREÇÃO: conta somente o real — vagas vazias e ids fantasmas não contam como equipe nem como pessoa
+  const idsValidos = new Set(colabs.map((c) => c.id));
+  const ocupadosValidos = (c: Carro): number => c.posicoes.filter((p) => !isVago(p) && idsValidos.has(p)).length;
+  const equipesValidas = (c: Carro): number => {
+    const n = ocupadosValidos(c);
+    if (n === 0) return 0;
+    if (n <= 3) return 1;
+    return 2;
+  };
+  const totalEquipesReais = lista.reduce((s, c) => s + equipesValidas(c), 0);
+  const totalOcupados = lista.reduce((s, c) => s + ocupadosValidos(c), 0);
+  const totalVagas = lista.reduce((s, c) => s + (c.posicoes.length - ocupadosValidos(c)), 0);
   return (
     <div className="anim-fade-up space-y-4">
       <div className="glass flex flex-wrap items-center justify-between gap-2 rounded-3xl p-4">
-        <p className="text-sm font-bold">{lista.length} carros · {lista.length * 2} equipes · {lista.length * 4} posições{regionalFiltro !== 'todas' ? ` · ${regionalLabel(regionalFiltro)}` : ''}</p>
+        <p className="text-sm font-bold">{lista.length} carros · {totalEquipesReais} equipes · {totalOcupados} pessoas alocadas{totalVagas > 0 ? ` · ${totalVagas} vaga${totalVagas === 1 ? '' : 's'} em aberto` : ' · sem vagas em aberto'}{regionalFiltro !== 'todas' ? ` · ${regionalLabel(regionalFiltro)}` : ''}</p>
         <button onClick={onNew} className="btn-primary !text-xs"><Plus className="h-4 w-4" /> Novo carro</button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
@@ -1294,7 +1342,8 @@ function CarroForm({ initial, colabs, carros, onClose, onSave, defaultRegional }
   const funcaoDe = (id: string): string => colabs.find((c) => c.id === id)?.funcao ?? '';
   const setPosicao = (i: number, v: string) =>
     setPos((p) => { const n = [...p] as [string, string, string, string]; n[i] = v; return n; });
-  const totalEscalados = pos.filter((p) => p.trim() !== '').length;
+  // CORREÇÃO: lugares vazios ('', null, '   ') nunca contam como pessoa escalada
+  const totalEscalados = pos.filter((p) => !isVago(p)).length;
   const eq01Nomes = [pos[0], pos[1]].map(nomeDe);
   const eq02Nomes = [pos[2], pos[3]].map(nomeDe);
 
@@ -1378,7 +1427,7 @@ function CarroForm({ initial, colabs, carros, onClose, onSave, defaultRegional }
                 value={pos[i]}
                 colabs={colabs}
                 carros={carros}
-                selecionados={pos.filter(Boolean)}
+                selecionados={pos.filter((p) => !isVago(p))}
                 accent="indigo"
                 onChange={(v) => setPosicao(i, v)}
               />
@@ -1390,7 +1439,8 @@ function CarroForm({ initial, colabs, carros, onClose, onSave, defaultRegional }
           <button
             onClick={() => {
               if (!prefixo.trim()) { alert('Informe o prefixo.'); return; }
-              const usados = pos.filter(Boolean);
+              // CORREÇÃO: filtra vagas vazias antes de validar duplicadas / obrigatoriedade
+              const usados = pos.filter((p) => !isVago(p));
               if (new Set(usados).size !== usados.length) { alert('Cada posição deve ter uma pessoa diferente.'); return; }
               if (usados.length === 0) { alert('Adicione ao menos 1 pessoa na equipe. Vagas podem ficar vazias e ser completadas na Operação.'); return; }
               onSave({ id: initial?.id ?? uid('car'), prefixo: prefixo.trim(), placa: placa || '—', modelo, posicoes: pos, status: 'operando', regional });

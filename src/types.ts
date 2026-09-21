@@ -86,6 +86,22 @@ export interface Indicadores {
   totalCarros: number;
   carrosOperando: number;
   carrosSemEquipe: number;
+  /** Ocupação dos carros — quantos carros estão fechados com 4 / 3 / 2 pessoas */
+  carrosCom4: number;
+  carrosCom3: number;
+  carrosCom2: number;
+  carrosCom1: number;
+  carrosVazios: number;
+}
+
+export interface OcupacaoCarros {
+  com4: number;
+  com3: number;
+  com2: number;
+  com1: number;
+  vazios: number;
+  total: number;
+  detalhe: Array<{ carroId: string; prefixo: string; placa: string; ocupados: number; fechado4: boolean }>;
 }
 
 export type EquipeStatus = 'completa' | 'incompleta' | 'sem-equipe';
@@ -94,6 +110,7 @@ export interface EquipeInfo {
   codigo: string;
   carroPrefixo: string;
   carroId: string;
-  membroIds: [string, string];
+  /** Membros alocados da equipe (2 pessoas = equipe única, 3 pessoas = equipe única, 4 pessoas = 2 equipes de 2). */
+  membroIds: string[];
   status: EquipeStatus;
 }

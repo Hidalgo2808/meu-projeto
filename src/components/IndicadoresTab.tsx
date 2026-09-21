@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Award,
+  Car as CarIcon,
   Crown,
   Download,
   Filter,
@@ -13,7 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { BancoRegistros, Carro, Colaborador, FiltroRegionalId } from '../types';
-import { regionalDoColab, toBR } from '../utils';
+import { distribuicaoOcupacaoCarros, filtrarCarrosPorRegional, regionalDoColab, toBR } from '../utils';
 import FiltroMes from './FiltroMes';
 import {
   exportarRankingCSV,
@@ -147,6 +148,17 @@ export default function IndicadoresTab({ registros, colabs, carros = [], regiona
   const totalAfastMes = ranking.reduce((s, r) => s + (r.afastamentos ?? 0), 0);
   const pessoasComFalta = ranking.filter((r) => r.faltas > 0).length;
 
+  // Ocupação dos carros (alocação atual, respeita filtro de regional)
+  const carrosDaRegional = useMemo(
+    () => filtrarCarrosPorRegional(carros, regionalAtiva),
+    [carros, regionalAtiva],
+  );
+  const ocupacao = useMemo(
+    () => distribuicaoOcupacaoCarros(carrosDaRegional, colabs),
+    [carrosDaRegional, colabs],
+  );
+  const maxOcup = Math.max(1, ocupacao.com4, ocupacao.com3, ocupacao.com2);
+
   const rotuloRegional = regionalAtiva === 'todas' ? 'Todas as regionais' : regionalAtiva === 'ribas' ? 'Regional de Ribas' : 'Regional de Água Clara';
 
   if (meses.length === 0) {
@@ -227,6 +239,118 @@ export default function IndicadoresTab({ registros, colabs, carros = [], regiona
             {'sub' in k && k.sub ? <p className="truncate text-xs font-semibold text-violet-500">{k.sub}</p> : null}
           </div>
         ))}
+      </div>
+
+      {/* Ocupação dos carros — quantos fechados com 4 / com 3 / com 2 pessoas */}
+      <div className="glass overflow-hidden rounded-3xl">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 px-5 py-3.5 text-white">
+          <h3 className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide">
+            <CarIcon className="h-5 w-5" /> Ocupação dos carros · {rotuloRegional}
+          </h3>
+          <span className="rounded-full bg-white/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wide backdrop-blur">
+            {ocupacao.total} carro{ocupacao.total === 1 ? '' : 's'} no escopo
+          </span>
+        </div>
+        <div className="grid gap-3 p-5 sm:grid-cols-3">
+          <div className="card-stat border-t-4 !border-t-emerald-500 text-center !shadow-lg">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">🚙 Fechados · 4 pessoas</p>
+            <p className="mt-1 bg-gradient-to-r from-emerald-500 to-teal-500 bg-clip-text text-4xl font-extrabold text-transparent">
+              {ocupacao.com4}
+            </p>
+            <p className="mt-1 text-[11px] font-semibold text-slate-500">
+              {ocupacao.total > 0 ? Math.round((ocupacao.com4 / ocupacao.total) * 100) : 0}% da frota · 2 equipes
+            </p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-teal-400 transition-all duration-700"
+                style={{ width: `${ocupacao.total > 0 ? (ocupacao.com4 / ocupacao.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+          <div className="card-stat border-t-4 !border-t-sky-500 text-center !shadow-lg">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">🚗 Com 3 pessoas</p>
+            <p className="mt-1 bg-gradient-to-r from-sky-500 to-cyan-500 bg-clip-text text-4xl font-extrabold text-transparent">
+              {ocupacao.com3}
+            </p>
+            <p className="mt-1 text-[11px] font-semibold text-slate-500">
+              {ocupacao.total > 0 ? Math.round((ocupacao.com3 / ocupacao.total) * 100) : 0}% da frota · 1 equipe de 3
+            </p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-sky-600 to-cyan-400 transition-all duration-700"
+                style={{ width: `${ocupacao.total > 0 ? (ocupacao.com3 / ocupacao.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+          <div className="card-stat border-t-4 !border-t-amber-500 text-center !shadow-lg">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">🚗 Com 2 pessoas</p>
+            <p className="mt-1 bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-4xl font-extrabold text-transparent">
+              {ocupacao.com2}
+            </p>
+            <p className="mt-1 text-[11px] font-semibold text-slate-500">
+              {ocupacao.total > 0 ? Math.round((ocupacao.com2 / ocupacao.total) * 100) : 0}% da frota · 1 equipe de 2
+            </p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-700"
+                style={{ width: `${ocupacao.total > 0 ? (ocupacao.com2 / ocupacao.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-3 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">
+            👤 1 pessoa: <b className="text-slate-700 dark:text-slate-200">{ocupacao.com1}</b>
+          </span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">
+            ⛔ Vazios: <b className="text-slate-700 dark:text-slate-200">{ocupacao.vazios}</b>
+          </span>
+          <span className="ml-auto hidden sm:inline">4 = fechado · 3 e 2 = equipe única</span>
+        </div>
+        {ocupacao.detalhe.length > 0 && (
+          <div className="max-h-56 overflow-y-auto border-t border-slate-200/70 px-5 py-3 dark:border-slate-700/60">
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+              {ocupacao.detalhe.map((d) => (
+                <div
+                  key={d.carroId}
+                  className={`flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs ${
+                    d.ocupados >= 4
+                      ? 'border-emerald-500/40 bg-emerald-500/10'
+                      : d.ocupados === 3
+                        ? 'border-sky-500/40 bg-sky-500/10'
+                        : d.ocupados === 2
+                          ? 'border-amber-500/40 bg-amber-500/10'
+                          : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60'
+                  }`}
+                  title={`${d.prefixo} · ${d.placa} — ${d.ocupados} pessoa(s)`}
+                >
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-extrabold text-white ${
+                      d.ocupados >= 4
+                        ? 'bg-gradient-to-br from-emerald-500 to-teal-600'
+                        : d.ocupados === 3
+                          ? 'bg-gradient-to-br from-sky-500 to-cyan-600'
+                          : d.ocupados === 2
+                            ? 'bg-gradient-to-br from-amber-500 to-orange-600'
+                            : 'bg-gradient-to-br from-slate-400 to-slate-600'
+                    }`}
+                  >
+                    {d.ocupados}p
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <b className="block truncate">{d.prefixo}</b>
+                    <span className="block truncate text-[10px] text-slate-500">
+                      {d.ocupados >= 4 ? '✅ fechado' : d.ocupados === 0 ? 'vazio' : `${d.ocupados} pessoa(s)`} · {d.placa}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {ocupacao.total === 0 && (
+          <p className="px-5 pb-5 text-center text-sm text-slate-500">Nenhum carro nesta regional.</p>
+        )}
       </div>
 
       {/* Pódio Top 3 */}

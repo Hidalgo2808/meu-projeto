@@ -76,6 +76,8 @@ export function rankingDoMes(
     if (!data.startsWith(mesKey)) continue;
     diasSet.add(data);
     for (const [colabId, reg] of Object.entries(dia)) {
+      // CORREÇÃO: nunca conta lugar vazio ('', '   ') no ranking
+      if (!colabId || colabId.trim() === '') continue;
       if (reg.situacao === 'presente') continue;
       const acc = porColab.get(colabId) ?? { faltas: 0, subs: 0, afastamentos: 0, motivos: {}, ultima: '' };
       if (reg.situacao === 'falta') acc.faltas += 1;
@@ -151,7 +153,8 @@ export function motivosDoMes(registros: BancoRegistros, mesKey: string): Array<{
   const map = new Map<string, number>();
   for (const [data, dia] of Object.entries(registros)) {
     if (!data.startsWith(mesKey)) continue;
-    for (const reg of Object.values(dia)) {
+    for (const [id, reg] of Object.entries(dia)) {
+      if (!id || id.trim() === '') continue;
       if (reg.situacao === 'presente') continue;
       const m = reg.situacao === 'afastado'
         ? `Afastado ${((reg.afastadoTipo ?? reg.motivo ?? 'INSS') as string).trim() || 'INSS'}`

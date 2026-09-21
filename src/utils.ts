@@ -145,8 +145,11 @@ export function historicoFaltasPorRegional(
     filtrarColabsPorRegional(colabs, carros, filtro).map((c) => c.id),
   );
   // Também inclui qualquer titular dos carros da regional (garante consistência com Operação)
+  // CORREÇÃO: ignora lugares vazios — nunca adiciona '' ao escopo
   for (const carro of filtrarCarrosPorRegional(carros, filtro)) {
-    for (const id of carro.posicoes) idsDaRegional.add(id);
+    for (const id of carro.posicoes) {
+      if (!isVago(id)) idsDaRegional.add(id);
+    }
   }
   return Object.keys(registros)
     .sort()
@@ -157,6 +160,7 @@ export function historicoFaltasPorRegional(
       let subs = 0;
       let afastados = 0;
       for (const [colabId, reg] of Object.entries(dia)) {
+        if (isVago(colabId)) continue;
         if (!idsDaRegional.has(colabId)) continue;
         if (reg.situacao === 'falta') faltas += 1;
         else if (reg.situacao === 'substituicao') subs += 1;
@@ -210,13 +214,14 @@ export function isAusencia(s: Situacao): boolean {
   return s === 'falta' || s === 'afastado' || s === 'ferias';
 }
 
-export function titulares(carros: Carro[]): string[] {
-  return carros.flatMap((c) => c.posicoes).filter(Boolean);
-}
-
-/** Slot vago? (string vazia, nula ou indefinida) */
+/** Slot vago? (string vazia, nula, indefinida ou só espaços) */
 export function isVago(id: unknown): boolean {
   return !id || (typeof id === 'string' && id.trim() === '');
+}
+
+export function titulares(carros: Carro[]): string[] {
+  // CORREÇÃO: nunca contar lugares vazios ('' / null / '   ') como pessoa
+  return carros.flatMap((c) => c.posicoes).filter((id) => !isVago(id));
 }
 
 /** Encontra o carro + índice da posição onde a pessoa está alocada. */
@@ -224,7 +229,7 @@ export function carroDaPessoa(
   carros: Carro[],
   colabId: string,
 ): { carro: Carro; posIndex: number } | null {
-  if (!colabId) return null;
+  if (isVago(colabId)) return null;
   for (const carro of carros) {
     const idx = carro.posicoes.findIndex((p) => p === colabId);
     if (idx >= 0) return { carro, posIndex: idx };
@@ -241,6 +246,53 @@ export function pessoasLivres(colabs: Colaborador[], carros: Carro[]): Colaborad
 /** Conta vagas (slots vazios) de um carro. */
 export function vagasDoCarro(carro: Carro): number {
   return carro.posicoes.filter((p) => isVago(p)).length;
+}
+
+/** Total de pessoas realmente alocadas (ignora lugares vazios). */
+export function totalOcupados(carros: Carro[]): number {
+  return titulares(carros).length;
+}
+
+/** Total de vagas vazias em um conjunto de carros. */
+export function totalVagas(carros: Carro[]): number {
+  return carros.reduce((s, c) => s + vagasDoCarro(c), 0);
+}
+
+/** Total real de equipes (2 pessoas = 1, 3 pessoas = 1, 4 pessoas = 2, 0 = 0). Nunca conta vaga vazia. */
+export function totalEquipesReais(carros: Carro[]): number {
+  return carros.reduce((s, c) => s + quantEquipesDoCarro(c), 0);
+}
+
+/**
+ * Distribuição de ocupação dos carros.
+ * - com4 = carro fechado com 4 pessoas (lotação máxima / 2 equipes)
+ * - com3 = carro com 3 pessoas (1 equipe de 3)
+ * - com2 = carro com 2 pessoas (1 equipe de 2)
+ * - com1 / vazios para completar o quadro
+ * Ignora vagas vazias, ids fantasmas e inativos quando `colabs` é informado.
+ */
+export function distribuicaoOcupacaoCarros(
+  carros: Carro[],
+  colabs?: Colaborador[],
+): { com4: number; com3: number; com2: number; com1: number; vazios: number; total: number; detalhe: Array<{ carroId: string; prefixo: string; placa: string; ocupados: number; fechado4: boolean }> } {
+  let com4 = 0;
+  let com3 = 0;
+  let com2 = 0;
+  let com1 = 0;
+  let vazios = 0;
+  const detalhe: Array<{ carroId: string; prefixo: string; placa: string; ocupados: number; fechado4: boolean }> = [];
+  for (const carro of carros) {
+    const ocupados = colabs ? ocupadosValidosDoCarro(carro, colabs) : ocupadosDoCarro(carro);
+    const n = ocupados.length;
+    if (n >= 4) com4 += 1;
+    else if (n === 3) com3 += 1;
+    else if (n === 2) com2 += 1;
+    else if (n === 1) com1 += 1;
+    else vazios += 1;
+    detalhe.push({ carroId: carro.id, prefixo: carro.prefixo, placa: carro.placa, ocupados: n, fechado4: n >= 4 });
+  }
+  detalhe.sort((a, b) => b.ocupados - a.ocupados || a.prefixo.localeCompare(b.prefixo, 'pt-BR'));
+  return { com4, com3, com2, com1, vazios, total: carros.length, detalhe };
 }
 
 /**
@@ -311,57 +363,147 @@ export function trocarPosicoes(
   });
 }
 
-export function equipesDoDia(carros: Carro[]): EquipeInfo[] {
-  const out: EquipeInfo[] = [];
-  for (const carro of carros) {
-    out.push({
+/** Pessoas alocadas (slots preenchidos) de um carro — ignora lugares vazios. */
+export function ocupadosDoCarro(carro: Carro): string[] {
+  return carro.posicoes.filter((p) => !isVago(p));
+}
+
+/** Ocupantes válidos: slot preenchido E pessoa existente (não inativa quando colabs informado). */
+export function ocupadosValidosDoCarro(carro: Carro, colabs?: Colaborador[]): string[] {
+  const base = ocupadosDoCarro(carro);
+  if (!colabs) return base;
+  const validos = new Set(colabs.filter((c) => c.status !== 'inativo').map((c) => c.id));
+  return base.filter((id) => validos.has(id));
+}
+
+/** Remove id fantasma (pessoa excluída) dos carros — vira vaga vazia. */
+export function sanearCarros(carros: Carro[], colabs: Colaborador[]): Carro[] {
+  const validos = new Set(colabs.map((c) => c.id));
+  let mudou = false;
+  const out = carros.map((carro) => {
+    const nova = carro.posicoes.map((p) => {
+      if (isVago(p)) return p;
+      if (!validos.has(p)) {
+        mudou = true;
+        return '';
+      }
+      return p;
+    }) as [string, string, string, string];
+    if (nova.every((p, i) => p === carro.posicoes[i])) return carro;
+    return { ...carro, posicoes: nova };
+  });
+  return mudou ? out : carros;
+}
+
+/**
+ * REGRA OFICIAL DE EQUIPES POR CARRO (indicador corrigido):
+ * - carro com 2 pessoas alocadas = 1 equipe
+ * - carro com 3 pessoas alocadas = 1 equipe
+ * - carro com 4 pessoas alocadas = 2 equipes
+ * - carro com 0-1 pessoa = 0/1 equipe (1 pessoa = 1 equipe incompleta)
+ */
+export function quantEquipesDoCarro(carro: Carro): number {
+  const n = ocupadosDoCarro(carro).length;
+  if (n === 0) return 0;
+  if (n <= 3) return 1;
+  return 2;
+}
+
+/** Status de uma equipe com N membros (2 ou 3 na equipe única). */
+export function statusEquipeMembros(membros: string[], dia: RegistrosDoDia | undefined): EquipeStatus {
+  const ocup = membros.filter((m) => !isVago(m));
+  if (ocup.length === 0) return 'sem-equipe';
+  const ok = (id: string): boolean => {
+    const s = situacaoDe(id, dia);
+    return s === 'presente' || s === 'substituicao';
+  };
+  const nOk = ocup.filter(ok).length;
+  if (nOk === 0) return 'sem-equipe';
+  // 1 pessoa sozinha nunca forma equipe completa
+  if (ocup.length === 1) return 'incompleta';
+  if (nOk === ocup.length) return 'completa';
+  return 'incompleta';
+}
+
+/** Equipes de um carro seguindo a regra 2-3 = 1 equipe, 4 = 2 equipes. */
+export function equipesDoCarro(carro: Carro): EquipeInfo[] {
+  const ocupados = ocupadosDoCarro(carro);
+  if (ocupados.length === 0) return [];
+  if (ocupados.length <= 3) {
+    return [
+      {
+        codigo: `${carro.prefixo} · EQ única (${ocupados.length}p)`,
+        carroPrefixo: carro.prefixo,
+        carroId: carro.id,
+        membroIds: [...ocupados],
+        status: 'completa',
+      },
+    ];
+  }
+  return [
+    {
       codigo: `${carro.prefixo} · EQ01`,
       carroPrefixo: carro.prefixo,
       carroId: carro.id,
       membroIds: [carro.posicoes[0], carro.posicoes[1]],
       status: 'completa',
-    });
-    out.push({
+    },
+    {
       codigo: `${carro.prefixo} · EQ02`,
       carroPrefixo: carro.prefixo,
       carroId: carro.id,
       membroIds: [carro.posicoes[2], carro.posicoes[3]],
       status: 'completa',
-    });
-  }
-  return out;
+    },
+  ];
+}
+
+export function equipesDoDia(carros: Carro[]): EquipeInfo[] {
+  return carros.flatMap((carro) => equipesDoCarro(carro));
 }
 
 export function statusEquipe(m1: string, m2: string, dia: RegistrosDoDia | undefined): EquipeStatus {
-  const ok = (id: string) => {
-    if (isVago(id)) return false;
-    const s = situacaoDe(id, dia);
-    return s === 'presente' || s === 'substituicao';
-  };
-  const n = (ok(m1) ? 1 : 0) + (ok(m2) ? 1 : 0);
-  if (n === 2) return 'completa';
-  if (n === 1) return 'incompleta';
-  return 'sem-equipe';
+  return statusEquipeMembros([m1, m2], dia);
 }
 
-export function statusCarro(carro: Carro, dia: RegistrosDoDia | undefined): { presentes: number; vagos: number; label: string; classe: 'ok' | 'warn' | 'bad' } {
-  const vagos = vagasDoCarro(carro);
-  const presentes = carro.posicoes.filter((id) => {
-    if (isVago(id)) return false;
+export function statusCarro(carro: Carro, dia: RegistrosDoDia | undefined, colabs?: Colaborador[]): { presentes: number; alocados: number; vagos: number; qtdEquipes: number; label: string; classe: 'ok' | 'warn' | 'bad' } {
+  // CORREÇÃO: alocados = somente slots preenchidos com pessoa válida; vagas vazias e ids fantasmas nunca contam
+  const ocupados = colabs ? ocupadosValidosDoCarro(carro, colabs) : ocupadosDoCarro(carro);
+  const vagos = carro.posicoes.length - ocupados.length;
+  const alocados = ocupados.length;
+  const qtdEquipes = alocados === 0 ? 0 : alocados <= 3 ? 1 : 2;
+  const presentes = ocupados.filter((id) => {
     const s = situacaoDe(id, dia);
     return s === 'presente' || s === 'substituicao';
   }).length;
-  if (presentes === 4) return { presentes, vagos, label: '2 equipes completas', classe: 'ok' };
-  if (presentes === 3) return { presentes, vagos, label: '1 completa + 1 incompleta', classe: 'warn' };
-  if (presentes === 2) {
-    const eq1 = statusEquipe(carro.posicoes[0], carro.posicoes[1], dia);
-    const eq2 = statusEquipe(carro.posicoes[2], carro.posicoes[3], dia);
-    if (eq1 === 'completa' || eq2 === 'completa') return { presentes, vagos, label: '1 equipe completa', classe: 'ok' };
-    return { presentes, vagos, label: '2 equipes incompletas', classe: 'warn' };
+
+  // Carro vazio
+  if (alocados === 0) return { presentes, alocados, vagos, qtdEquipes, label: 'Sem equipe · carro vazio', classe: 'bad' };
+  // REGRA: 2 ou 3 pessoas = 1 equipe única
+  if (alocados <= 3) {
+    if (presentes === 0) return { presentes, alocados, vagos, qtdEquipes, label: 'Sem equipe (faltas/afast.)', classe: 'bad' };
+    if (alocados === 1) return { presentes, alocados, vagos, qtdEquipes, label: 'Equipe incompleta (1 pessoa)', classe: 'warn' };
+    if (presentes === alocados) {
+      return {
+        presentes, alocados, vagos, qtdEquipes,
+        label: alocados === 2 ? '1 equipe completa (2 pessoas)' : '1 equipe completa (3 pessoas)',
+        classe: 'ok',
+      };
+    }
+    return { presentes, alocados, vagos, qtdEquipes, label: `1 equipe incompleta (${presentes}/${alocados})`, classe: 'warn' };
   }
-  if (presentes === 1) return { presentes, vagos, label: vagos > 0 ? `Equipe incompleta · ${vagos} vaga${vagos === 1 ? '' : 's'}` : 'Equipe incompleta', classe: 'warn' };
-  if (vagos > 0) return { presentes, vagos, label: `${vagos} vaga${vagos === 1 ? '' : 's'} em aberto`, classe: 'bad' };
-  return { presentes, vagos, label: 'Sem equipe', classe: 'bad' };
+  // REGRA: 4 pessoas = 2 equipes
+  if (presentes === 4) return { presentes, alocados, vagos, qtdEquipes, label: '2 equipes completas', classe: 'ok' };
+  if (presentes === 3) return { presentes, alocados, vagos, qtdEquipes, label: '1 completa + 1 incompleta', classe: 'warn' };
+  if (presentes === 2) {
+    const eq1 = statusEquipeMembros([carro.posicoes[0], carro.posicoes[1]], dia);
+    const eq2 = statusEquipeMembros([carro.posicoes[2], carro.posicoes[3]], dia);
+    if (eq1 === 'completa' || eq2 === 'completa') return { presentes, alocados, vagos, qtdEquipes, label: '1 equipe completa', classe: 'ok' };
+    return { presentes, alocados, vagos, qtdEquipes, label: '2 equipes incompletas', classe: 'warn' };
+  }
+  if (presentes === 1) return { presentes, alocados, vagos, qtdEquipes, label: 'Equipes incompletas', classe: 'warn' };
+  if (vagos > 0) return { presentes, alocados, vagos, qtdEquipes, label: `${vagos} vaga${vagos === 1 ? '' : 's'} em aberto`, classe: 'bad' };
+  return { presentes, alocados, vagos, qtdEquipes, label: 'Sem equipe', classe: 'bad' };
 }
 
 export function calcIndicadores(
@@ -369,7 +511,12 @@ export function calcIndicadores(
   carros: Carro[],
   dia: RegistrosDoDia | undefined,
 ): Indicadores {
-  const tids = titulares(carros).filter((id) => colaboradores.some((c) => c.id === id && c.status !== 'inativo'));
+  // CORREÇÃO: ignora lugares vazios, ids fantasmas e inativos em todas as contagens
+  const ativos = new Map(colaboradores.filter((c) => c.status !== 'inativo').map((c) => [c.id, c]));
+  const tids = titulares(carros).filter((id) => {
+    if (isVago(id)) return false;
+    return ativos.has(id);
+  });
   const totalColaboradores = tids.length;
   let presentes = 0;
   let faltas = 0;
@@ -384,12 +531,35 @@ export function calcIndicadores(
     else presentes += 1;
   }
 
-  const equipes = equipesDoDia(carros);
+  // CORREÇÃO: equipes montadas só com ocupantes válidos — vaga vazia / fantasma nunca gera equipe
+  const equipes: EquipeInfo[] = [];
+  for (const carro of carros) {
+    const validos = ocupadosValidosDoCarro(carro, colaboradores);
+    if (validos.length === 0) continue;
+    if (validos.length <= 3) {
+      equipes.push({
+        codigo: `${carro.prefixo} · EQ única (${validos.length}p)`,
+        carroPrefixo: carro.prefixo,
+        carroId: carro.id,
+        membroIds: [...validos],
+        status: 'completa',
+      });
+    } else {
+      const eq1 = [carro.posicoes[0], carro.posicoes[1]].filter((id) => !isVago(id) && ativos.has(id));
+      const eq2 = [carro.posicoes[2], carro.posicoes[3]].filter((id) => !isVago(id) && ativos.has(id));
+      if (eq1.length > 0) {
+        equipes.push({ codigo: `${carro.prefixo} · EQ01`, carroPrefixo: carro.prefixo, carroId: carro.id, membroIds: eq1, status: 'completa' });
+      }
+      if (eq2.length > 0) {
+        equipes.push({ codigo: `${carro.prefixo} · EQ02`, carroPrefixo: carro.prefixo, carroId: carro.id, membroIds: eq2, status: 'completa' });
+      }
+    }
+  }
   let completas = 0;
   let incompletas = 0;
   let semEquipe = 0;
   for (const e of equipes) {
-    const st = statusEquipe(e.membroIds[0], e.membroIds[1], dia);
+    const st = statusEquipeMembros(e.membroIds, dia);
     if (st === 'completa') completas += 1;
     else if (st === 'incompleta') incompletas += 1;
     else semEquipe += 1;
@@ -397,10 +567,12 @@ export function calcIndicadores(
   let carrosOperando = 0;
   let carrosSemEquipe = 0;
   for (const c of carros) {
-    const { presentes: p } = statusCarro(c, dia);
+    const { presentes: p } = statusCarro(c, dia, colaboradores);
     if (p > 0) carrosOperando += 1;
     else carrosSemEquipe += 1;
   }
+  // Ocupação: quantos carros fechados com 4 / com 3 / com 2 pessoas
+  const ocup = distribuicaoOcupacaoCarros(carros, colaboradores);
   return {
     totalColaboradores,
     presentes,
@@ -414,6 +586,11 @@ export function calcIndicadores(
     totalCarros: carros.length,
     carrosOperando,
     carrosSemEquipe,
+    carrosCom4: ocup.com4,
+    carrosCom3: ocup.com3,
+    carrosCom2: ocup.com2,
+    carrosCom1: ocup.com1,
+    carrosVazios: ocup.vazios,
   };
 }
 
@@ -426,6 +603,8 @@ export function listaFaltas(
   const out: Array<{ colab: Colaborador; carro: Carro; equipe: string; registro: NonNullable<RegistrosDoDia[string]>; substituto?: Colaborador }> = [];
   for (const carro of carros) {
     carro.posicoes.forEach((id, idx) => {
+      // CORREÇÃO: pula lugares vazios antes de qualquer contagem
+      if (isVago(id)) return;
       const r = dia[id];
       if (!r || r.situacao === 'presente') return;
       const colab = colaboradores.find((c) => c.id === id);
@@ -468,6 +647,9 @@ export function exportarExcel(
     ['Total de carros', indicadores.totalCarros],
     ['Carros operando', indicadores.carrosOperando],
     ['Carros sem equipe', indicadores.carrosSemEquipe],
+    ['Carros fechados com 4 pessoas', (indicadores as Indicadores).carrosCom4 ?? 0],
+    ['Carros com 3 pessoas', (indicadores as Indicadores).carrosCom3 ?? 0],
+    ['Carros com 2 pessoas', (indicadores as Indicadores).carrosCom2 ?? 0],
   ]
     .map(([k, v]) => `<tr><td>${escHtml(String(k))}</td><td>${v}</td></tr>`)
     .join('');
@@ -531,6 +713,9 @@ th{background:#f1f5f9}
 <div class="card"><span>Completas</span><b>${indicadores.completas}</b></div>
 <div class="card"><span>Incompletas</span><b>${indicadores.incompletas}</b></div>
 <div class="card"><span>Carros operando</span><b>${indicadores.carrosOperando}/${indicadores.totalCarros}</b></div>
+<div class="card"><span>Fechados com 4 pessoas</span><b>${(indicadores as Indicadores).carrosCom4 ?? 0}</b></div>
+<div class="card"><span>Carros com 3 pessoas</span><b>${(indicadores as Indicadores).carrosCom3 ?? 0}</b></div>
+<div class="card"><span>Carros com 2 pessoas</span><b>${(indicadores as Indicadores).carrosCom2 ?? 0}</b></div>
 </div>
 <h3>Detalhamento de faltas e substituições</h3>
 <table><thead><tr><th>Colaborador</th><th>Função</th><th>Carro</th><th>Equipe</th><th>Situação</th><th>Substituto</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Nenhuma falta registrada.</td></tr>'}</tbody></table>
@@ -729,12 +914,13 @@ export function historicoFaltas(registros: BancoRegistros): Array<{ data: string
     .slice(-14)
     .map((data) => {
       const dia = registros[data];
-      const vals = Object.values(dia);
+      // CORREÇÃO: ignora chaves de lugares vazios ('', '   ') que nunca são pessoa
+      const entries = Object.entries(dia).filter(([id]) => !isVago(id));
       return {
         data,
-        faltas: vals.filter((v) => v.situacao === 'falta').length,
-        subs: vals.filter((v) => v.situacao === 'substituicao').length,
-        afastados: vals.filter((v) => v.situacao === 'afastado' || v.situacao === 'ferias').length,
+        faltas: entries.filter(([, v]) => v.situacao === 'falta').length,
+        subs: entries.filter(([, v]) => v.situacao === 'substituicao').length,
+        afastados: entries.filter(([, v]) => v.situacao === 'afastado' || v.situacao === 'ferias').length,
       };
     });
 }
@@ -779,7 +965,9 @@ export function totaisDoMes(
     let subs = 0;
     let afastados = 0;
     for (const dia of Object.values(registros)) {
-      for (const r of Object.values(dia)) {
+      // CORREÇÃO: não conta lugares vazios
+      for (const [id, r] of Object.entries(dia)) {
+        if (isVago(id)) continue;
         if (r.situacao === 'falta') faltas += 1;
         else if (r.situacao === 'substituicao') subs += 1;
         else if (r.situacao === 'afastado' || r.situacao === 'ferias') afastados += 1;
@@ -794,7 +982,8 @@ export function totaisDoMes(
   for (const [data, dia] of Object.entries(registros)) {
     if (!data.startsWith(mes)) continue;
     dias += 1;
-    for (const r of Object.values(dia)) {
+    for (const [id, r] of Object.entries(dia)) {
+      if (isVago(id)) continue;
       if (r.situacao === 'falta') faltas += 1;
       else if (r.situacao === 'substituicao') subs += 1;
       else if (r.situacao === 'afastado' || r.situacao === 'ferias') afastados += 1;
