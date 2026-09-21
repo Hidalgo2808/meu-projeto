@@ -1,0 +1,428 @@
+import { useMemo, useState } from 'react';
+import {
+  Award,
+  CalendarDays,
+  Crown,
+  Download,
+  Filter,
+  Medal,
+  Search,
+  TrendingUp,
+  TriangleAlert,
+  Trophy,
+  Users,
+} from 'lucide-react';
+import type { BancoRegistros, Colaborador } from '../types';
+import { toBR } from '../utils';
+import {
+  exportarRankingCSV,
+  listarMesesDisponiveis,
+  motivosDoMes,
+  rankingDoMes,
+  resumosPorMes,
+  rotuloMes,
+  rotuloMesLongo,
+} from '../indicadores';
+
+interface Props {
+  registros: BancoRegistros;
+  colabs: Colaborador[];
+  onVerDia: (dataISO: string) => void;
+}
+
+type Ordenacao = 'faltas' | 'total' | 'nome';
+
+function AvatarMini({ nome, foto }: { nome: string; foto: string }) {
+  const [err, setErr] = useState(false);
+  if (!foto || err) {
+    const ini = nome.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
+    return (
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white">
+        {ini}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={foto}
+      alt={nome}
+      onError={() => setErr(true)}
+      className="h-11 w-11 shrink-0 rounded-full object-cover ring-2 ring-white/20"
+      loading="lazy"
+    />
+  );
+}
+
+function medalha(i: number): string {
+  if (i === 0) return 'from-amber-300 to-yellow-600 text-white';
+  if (i === 1) return 'from-slate-300 to-slate-500 text-white';
+  if (i === 2) return 'from-orange-300 to-amber-700 text-white';
+  return 'bg-slate-100 dark:bg-slate-800 text-slate-500';
+}
+
+export default function IndicadoresTab({ registros, colabs, onVerDia }: Props) {
+  const meses = useMemo(() => listarMesesDisponiveis(registros), [registros]);
+  const [mesSel, setMesSel] = useState<string>(meses[0] ?? '');
+  const mesEfetivo = meses.includes(mesSel) ? mesSel : (meses[0] ?? '');
+  const [busca, setBusca] = useState('');
+  const [ord, setOrd] = useState<Ordenacao>('faltas');
+  const [somenteFaltas, setSomenteFaltas] = useState(true);
+
+  const ranking = useMemo(
+    () => (mesEfetivo ? rankingDoMes(registros, colabs, mesEfetivo) : []),
+    [registros, colabs, mesEfetivo],
+  );
+  const resumos = useMemo(() => resumosPorMes(registros, colabs), [registros, colabs]);
+  const motivos = useMemo(() => (mesEfetivo ? motivosDoMes(registros, mesEfetivo) : []), [registros, mesEfetivo]);
+  const maxMotivo = Math.max(1, ...motivos.map((m) => m.qtd));
+
+  const filtrado = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    let lista = ranking.filter((r) => {
+      const matchBusca =
+        q === '' || (r.nome + r.funcao + r.matricula).toLowerCase().includes(q);
+      const matchTipo = somenteFaltas ? r.faltas > 0 : r.totalAusencias > 0;
+      return matchBusca && matchTipo;
+    });
+    if (ord === 'nome') lista = [...lista].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    else if (ord === 'total')
+      lista = [...lista].sort((a, b) => b.totalAusencias - a.totalAusencias || b.faltas - a.faltas);
+    return lista;
+  }, [ranking, busca, ord, somenteFaltas]);
+
+  const top3 = filtrado.slice(0, 3);
+  const resto = filtrado.slice(3);
+  const maxFaltas = Math.max(1, ...ranking.map((r) => r.faltas));
+  const totalFaltasMes = ranking.reduce((s, r) => s + r.faltas, 0);
+  const totalSubsMes = ranking.reduce((s, r) => s + r.substituicoes, 0);
+  const pessoasComFalta = ranking.filter((r) => r.faltas > 0).length;
+
+  if (meses.length === 0) {
+    return (
+      <div className="glass anim-fade-up rounded-3xl p-10 text-center">
+        <Trophy className="mx-auto mb-3 h-10 w-10 text-amber-500" />
+        <h3 className="font-extrabold">Sem indicadores ainda</h3>
+        <p className="mt-1 text-sm text-slate-500">Registre faltas na aba Operação para ver o ranking mensal aqui.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="anim-fade-up space-y-5">
+      {/* Seletor de mês */}
+      <div className="glass rounded-3xl p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-2 text-sm font-extrabold">
+            <CalendarDays className="h-4 w-4 text-indigo-500" /> MÊS DE REFERÊNCIA
+          </span>
+          <div className="flex flex-1 flex-wrap gap-2">
+            {meses.map((m) => (
+              <button
+                key={m}
+                onClick={() => setMesSel(m)}
+                className={`rounded-xl px-3.5 py-2 text-xs font-extrabold uppercase tracking-wide transition-all ${
+                  m === mesEfetivo
+                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/25'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+              >
+                {rotuloMes(m)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <h2 className="mt-3 bg-gradient-to-r from-indigo-500 via-violet-500 to-amber-500 bg-clip-text text-xl font-extrabold text-transparent sm:text-2xl">
+          🏆 Quem mais faltou — {rotuloMesLongo(mesEfetivo)}
+        </h2>
+      </div>
+
+      {/* KPIs do mês */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: 'Faltas no mês', value: String(totalFaltasMes), icon: '🔴', border: '!border-t-red-500' },
+          { label: 'Substituições', value: String(totalSubsMes), icon: '🔵', border: '!border-t-sky-500' },
+          { label: 'Pessoas c/ falta', value: String(pessoasComFalta), icon: '👥', border: '!border-t-amber-500' },
+          {
+            label: 'Campeão do mês',
+            value: ranking[0] ? `${ranking[0].faltas} faltas` : '—',
+            sub: ranking[0]?.nome.split(' ').slice(0, 2).join(' ') ?? '—',
+            icon: '👑',
+            border: '!border-t-violet-500',
+          },
+        ].map((k) => (
+          <div key={k.label} className={`card-stat border-t-4 text-center ${k.border}`}>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{k.icon} {k.label}</p>
+            <p className="mt-1 text-2xl font-extrabold">{k.value}</p>
+            {'sub' in k && k.sub ? <p className="truncate text-xs font-semibold text-violet-500">{k.sub}</p> : null}
+          </div>
+        ))}
+      </div>
+
+      {/* Pódio Top 3 */}
+      {top3.length > 0 && (
+        <div className="glass rounded-3xl p-5">
+          <h3 className="mb-4 flex items-center gap-2 font-extrabold">
+            <Crown className="h-5 w-5 text-amber-500" /> PÓDIO DO MÊS
+          </h3>
+          <div className="grid gap-3 md:grid-cols-3">
+            {top3.map((r, i) => (
+              <div
+                key={r.colabId}
+                className={`relative overflow-hidden rounded-2xl border p-4 backdrop-blur transition-all hover:-translate-y-1 ${
+                  i === 0
+                    ? 'border-amber-400/50 bg-gradient-to-br from-amber-500/20 via-yellow-500/10 to-transparent'
+                    : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60'
+                }`}
+              >
+                <span
+                  className={`absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br text-xs font-extrabold shadow ${medalha(i)}`}
+                >
+                  {i + 1}º
+                </span>
+                <div className="flex items-center gap-3">
+                  <AvatarMini nome={r.nome} foto={r.foto} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-extrabold">
+                      {i === 0 ? '👑 ' : i === 1 ? '🥈 ' : '🥉 '}{r.nome}
+                    </p>
+                    <p className="text-xs text-slate-500">{r.funcao} · {r.matricula}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-end justify-between gap-2">
+                  <div>
+                    <p className="text-3xl font-extrabold text-red-500">{r.faltas}<span className="text-xs font-bold text-slate-400"> faltas</span></p>
+                    <p className="text-[11px] text-slate-500">+ {r.substituicoes} subst. · {r.taxaFalta}% dos dias</p>
+                  </div>
+                </div>
+                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-red-600 via-red-500 to-amber-500 transition-all duration-700"
+                    style={{ width: `${Math.max(4, (r.faltas / maxFaltas) * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-2 truncate text-[11px] text-slate-500">Última: {r.ultimaFalta ? toBR(r.ultimaFalta) : '—'} · {r.principalMotivo}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Filtros + ranking completo */}
+      <div className="glass rounded-3xl p-5">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar no ranking…"
+              className="input !pl-9"
+            />
+          </div>
+          <span className="flex items-center gap-1 text-xs font-bold text-slate-500"><Filter className="h-3.5 w-3.5" /> Ordenar:</span>
+          {([['faltas', 'Mais faltas'], ['total', 'Mais ausências'], ['nome', 'A–Z']] as Array<[Ordenacao, string]>).map(([v, l]) => (
+            <button
+              key={v}
+              onClick={() => setOrd(v)}
+              className={`rounded-xl px-3 py-2 text-xs font-bold ${ord === v ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}
+            >
+              {l}
+            </button>
+          ))}
+          <button
+            onClick={() => setSomenteFaltas(!somenteFaltas)}
+            className={`rounded-xl px-3 py-2 text-xs font-bold ${somenteFaltas ? 'bg-red-500/15 text-red-500 border border-red-500/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}
+            title="Alternar entre só faltas ou faltas + substituições"
+          >
+            {somenteFaltas ? '🔴 só faltas' : '🔴+🔵 faltas e subs'}
+          </button>
+          <button
+            onClick={() => mesEfetivo && exportarRankingCSV(mesEfetivo, filtrado)}
+            className="btn-ghost !py-2 !text-xs"
+          >
+            <Download className="h-4 w-4" /> CSV
+          </button>
+        </div>
+
+        {resto.length > 0 || top3.length > 0 ? (
+          <div className="space-y-2">
+            {[...top3, ...resto].map((r, i) => (
+              <div
+                key={r.colabId}
+                className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/60 p-3 transition-all hover:shadow-md dark:border-slate-700/60 dark:bg-slate-800/50"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-extrabold ${medalha(i)}`}>
+                  {i + 1}º
+                </span>
+                <AvatarMini nome={r.nome} foto={r.foto} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{r.nome}</p>
+                  <p className="truncate text-[11px] text-slate-500">{r.funcao} · {r.principalMotivo}</p>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-red-600 to-orange-400"
+                      style={{ width: `${Math.max(3, (r.faltas / maxFaltas) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-lg font-extrabold leading-none text-red-500">🔴 {r.faltas}</p>
+                  <p className="mt-0.5 text-[11px] font-semibold text-slate-500">🔵 {r.substituicoes} · {r.taxaFalta}%</p>
+                </div>
+                <button
+                  onClick={() => r.ultimaFalta && onVerDia(r.ultimaFalta)}
+                  className="hidden shrink-0 rounded-xl bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-500 hover:bg-indigo-600 hover:text-white sm:block dark:bg-slate-700"
+                  title="Ver último dia com falta"
+                >
+                  ver dia →
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-4 text-center text-sm text-emerald-600 dark:text-emerald-300">
+            Nenhuma falta em {rotuloMesLongo(mesEfetivo)}. 🎉
+          </p>
+        )}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Motivos do mês */}
+        <div className="glass rounded-3xl p-5">
+          <h3 className="mb-1 flex items-center gap-2 font-extrabold">
+            <TriangleAlert className="h-5 w-5 text-amber-500" /> MOTIVOS NO MÊS
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">O que mais gerou ausência em {rotuloMes(mesEfetivo)}.</p>
+          <div className="space-y-2.5">
+            {motivos.map((m) => (
+              <div key={m.motivo}>
+                <div className="mb-1 flex justify-between text-xs">
+                  <span className="max-w-[75%] truncate font-semibold">{m.motivo}</span>
+                  <b>{m.qtd}</b>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-400"
+                    style={{ width: `${(m.qtd / maxMotivo) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+            {motivos.length === 0 && <p className="text-sm text-slate-500">Sem motivos registrados.</p>}
+          </div>
+        </div>
+
+        {/* Campeões de cada mês */}
+        <div className="glass rounded-3xl p-5">
+          <h3 className="mb-1 flex items-center gap-2 font-extrabold">
+            <Medal className="h-5 w-5 text-indigo-500" /> CAMPEÕES DE CADA MÊS
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">Quem mais faltou em cada mês com lançamento.</p>
+          <div className="space-y-2">
+            {resumos.map((r) => (
+              <button
+                key={r.mesKey}
+                onClick={() => setMesSel(r.mesKey)}
+                className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition-all hover:-translate-y-0.5 ${
+                  r.mesKey === mesEfetivo
+                    ? 'border-indigo-500/50 bg-indigo-500/10'
+                    : 'border-slate-200/70 bg-white/50 dark:border-slate-700/60 dark:bg-slate-800/50'
+                }`}
+              >
+                <span className="flex h-10 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 text-white">
+                  <b className="text-xs uppercase leading-none">{r.rotulo.split('/')[0]}</b>
+                  <span className="text-[10px] opacity-70">{r.rotulo.split('/')[1]?.slice(2)}</span>
+                </span>
+                {r.campeao ? (
+                  <>
+                    <AvatarMini nome={r.campeao.nome} foto={r.campeao.foto} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold">{r.campeao.nome}</span>
+                      <span className="block text-[11px] text-slate-500">
+                        🔴 {r.campeao.faltas} faltas · {r.totalFaltas} no mês · {r.diasComLancamento} dias lançados
+                      </span>
+                    </span>
+                    <Trophy className={`h-5 w-5 shrink-0 ${r.mesKey === mesEfetivo ? 'text-indigo-500' : 'text-amber-500'}`} />
+                  </>
+                ) : (
+                  <span className="text-sm text-slate-500">Sem faltas</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Evolução / reincidência */}
+      <div className="glass rounded-3xl p-5">
+        <h3 className="mb-1 flex items-center gap-2 font-extrabold">
+          <TrendingUp className="h-5 w-5 text-emerald-500" /> REINCIDÊNCIA — FALTAS POR MÊS (TOP 5)
+        </h3>
+        <p className="mb-4 flex items-center gap-1.5 text-xs text-slate-500">
+          <Users className="h-3.5 w-3.5" /> Quem aparece em vários meses seguidos merece atenção.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left text-xs">
+            <thead>
+              <tr className="uppercase text-slate-500">
+                <th className="p-2.5">Colaborador</th>
+                {resumos.slice().reverse().map((r) => (
+                  <th key={r.mesKey} className="p-2.5 text-center">{r.rotulo}</th>
+                ))}
+                <th className="p-2.5 text-center"><Award className="mx-auto h-4 w-4" /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranking.slice(0, 5).map((r) => {
+                const porMes = new Map<string, number>();
+                for (const [data, dia] of Object.entries(registros)) {
+                  const mk = data.slice(0, 7);
+                  const reg = dia[r.colabId];
+                  if (reg?.situacao === 'falta') porMes.set(mk, (porMes.get(mk) ?? 0) + 1);
+                }
+                const total = [...porMes.values()].reduce((s, v) => s + v, 0);
+                const mesesComFalta = porMes.size;
+                return (
+                  <tr key={r.colabId} className="border-t border-slate-200/70 dark:border-slate-700/60">
+                    <td className="p-2.5">
+                      <span className="flex items-center gap-2">
+                        <AvatarMini nome={r.nome} foto={r.foto} />
+                        <span>
+                          <b className="block max-w-[160px] truncate text-[13px]">{r.nome}</b>
+                          <span className="text-[11px] text-slate-500">{r.funcao}</span>
+                        </span>
+                      </span>
+                    </td>
+                    {resumos.slice().reverse().map((m) => {
+                      const v = porMes.get(m.mesKey) ?? 0;
+                      return (
+                        <td key={m.mesKey} className="p-2.5 text-center">
+                          <span
+                            className={`inline-flex min-w-[34px] justify-center rounded-lg px-2 py-1 font-extrabold ${
+                              v >= 3
+                                ? 'bg-red-500 text-white'
+                                : v === 2
+                                  ? 'bg-orange-500/20 text-orange-500 border border-orange-500/40'
+                                  : v === 1
+                                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                                    : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
+                            }`}
+                          >
+                            {v}
+                          </span>
+                        </td>
+                      );
+                    })}
+                    <td className="p-2.5 text-center font-extrabold">
+                      {total} <span className="font-normal text-slate-400">({mesesComFalta}m)</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
