@@ -8,6 +8,7 @@ import IndicadoresTab from './components/IndicadoresTab';
 import GerenciarEquipeModal from './components/GerenciarEquipeModal';
 import EditarUnidadeCarroModal from './components/EditarUnidadeCarroModal';
 import CompanyLogo, { LogoUploadButton } from './components/CompanyLogo';
+import InventarHeader from './components/InventarHeader';
 import SeletorPessoaEquipe from './components/SeletorPessoaEquipe';
 import CarroTopView from './components/CarroTopView';
 import FiltroRegional from './components/FiltroRegional';
@@ -225,6 +226,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-200 dark:from-slate-950 dark:via-indigo-950/40 dark:to-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+      {/* LOGO INVENTAR — topo institucional da página */}
+      <InventarHeader />
       {/* HEADER */}
       <header className="sticky top-0 z-30 border-b border-white/40 dark:border-slate-800/80 bg-white/70 dark:bg-slate-950/70 backdrop-blur-xl no-print">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">

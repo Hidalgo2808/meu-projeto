@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Building2 } from 'lucide-react';
 
 const LS_KEY = 'f44_company_logo';
-const CANDIDATES = ['./logo-empresa.png', './logo-empresa.jpg', './logo-empresa.jpeg', './logo-empresa.webp', './logo-empresa.svg', '/logo-empresa.png', '/logo-empresa.svg'];
+const CANDIDATES = ['./logo_inventar_expandWEB_novo2.jpg', '/logo_inventar_expandWEB_novo2.jpg', './logo-inventar.jpg', '/logo-inventar.jpg', './logo-inventar.svg', '/logo-inventar.svg', './logo-empresa.png', './logo-empresa.jpg', './logo-empresa.jpeg', './logo-empresa.webp', './logo-empresa.svg', '/logo-empresa.png', '/logo-empresa.svg'];
 
 interface CompanyLogoProps {
   size?: number;
