@@ -12,6 +12,7 @@ import InventarHeader from './components/InventarHeader';
 import SeletorPessoaEquipe from './components/SeletorPessoaEquipe';
 import CarroTopView from './components/CarroTopView';
 import FiltroRegional from './components/FiltroRegional';
+import SeletorUnidade from './components/SeletorUnidade';
 import FiltroMes from './components/FiltroMes';
 import type { BancoRegistros, Carro, Colaborador, FiltroRegionalId, Registro } from './types';
 import { FUNCOES_COLABORADOR, MOTIVOS_AFASTAMENTO } from './types';
@@ -19,8 +20,8 @@ import { TEMAS_UNIDADE, temaUnidade } from './unidadeTheme';
 import { TEMAS_EQUIPE, equipeIdDePosicao, temaEquipe } from './equipeTheme';
 import { MOCK_CARROS, MOCK_COLABORADORES, mockHistorico } from './mock';
 import {
-  alocarPessoa, calcIndicadores, carroDaPessoa, exportarExcel, exportarPDF, filtrarCarrosPorRegional, filtrarColabsPorRegional,
-  historicoFaltasPorRegional, initials, isVago, listaFaltas, listarMesesComLancamento,
+  alocarPessoa, calcIndicadores, carroDaPessoa, dataAutomaticaHoje, dataLongaBR, exportarExcel, exportarPDF, filtrarCarrosPorRegional, filtrarColabsPorRegional,
+  historicoFaltasPorRegional, initials, isHoje, isVago, listaFaltas, listarMesesComLancamento,
   loadLS, migrarCarrosComRegional, migrarColabsComRegional, migrarFuncoesColabs, normalizarFuncao, nowHM, ocupadosDoCarro, parseColaboradoresCSV, quantEquipesDoCarro, regionalCurto,
   regionalDoCarro, regionalDoColab, regionalLabel, removerDoCarro, saveLS, situacaoLabel, statusCarro, statusEquipe,
   titulares, toBR, todayKey, totaisDoMes, totaisPorMes, uid, vagasDoCarro,
@@ -73,7 +74,9 @@ export default function App() {
     if (Object.keys(saved).length > 0) return saved;
     return mockHistorico();
   });
-  const [dataSel, setDataSel] = useState<string>(() => loadLS('f44_data', todayKey()));
+  const [dataSel, setDataSel] = useState<string>(() => dataAutomaticaHoje());
+  // false = data automática de hoje | true = usuário navegou manualmente para outro dia
+  const [dataManual, setDataManual] = useState(false);
   const [dark, setDark] = useState<boolean>(() => loadLS('f44_theme', true));
   const [tab, setTab] = useState<Tab>('operacao');
   const [busca, setBusca] = useState('');
@@ -93,6 +96,44 @@ export default function App() {
     document.documentElement.classList.toggle('dark', dark);
     saveLS('f44_theme', dark);
   }, [dark]);
+  // DATA AUTOMÁTICA AO ENTRAR NO APLICATIVO — sempre hoje, ignora data antiga salva
+  useEffect(() => {
+    const hoje = dataAutomaticaHoje();
+    setDataSel(hoje);
+    setDataManual(false);
+    saveLS('f44_data', hoje);
+  }, []);
+  // Virada de meia-noite / volta de suspensão: se ainda está no modo automático, acompanha o dia real
+  useEffect(() => {
+    if (dataManual) return;
+    const sincronizar = () => {
+      const hoje = dataAutomaticaHoje();
+      setDataSel((prev) => (prev === hoje ? prev : hoje));
+    };
+    const timer = window.setInterval(sincronizar, 30_000);
+    const onVisivel = () => {
+      if (document.visibilityState === 'visible') sincronizar();
+    };
+    window.addEventListener('focus', sincronizar);
+    document.addEventListener('visibilitychange', onVisivel);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', sincronizar);
+      document.removeEventListener('visibilitychange', onVisivel);
+    };
+  }, [dataManual]);
+  // Troca manual pelo calendário — marca modo manual (ou volta ao automático se escolher hoje)
+  function trocarDataManual(nova: string) {
+    if (!nova) return;
+    setDataSel(nova);
+    setDataManual(nova !== dataAutomaticaHoje());
+  }
+  // Botão "Hoje" — volta para a data automática
+  function voltarParaHoje() {
+    const hoje = dataAutomaticaHoje();
+    setDataSel(hoje);
+    setDataManual(false);
+  }
   useEffect(() => saveLS('f44_colabs', colabs), [colabs]);
   useEffect(() => saveLS('f44_carros', carros), [carros]);
   useEffect(() => saveLS('f44_regs', registros), [registros]);
@@ -175,7 +216,7 @@ export default function App() {
     setColabs(MOCK_COLABORADORES);
     setCarros(MOCK_CARROS);
     setRegistros(mockHistorico());
-    setDataSel(todayKey());
+    voltarParaHoje();
     setRegionalFiltro('todas');
     setMesFiltro('todos');
   }
@@ -185,7 +226,7 @@ export default function App() {
     if (v !== 'todos') {
       const diasDoMes = hist.filter((h) => h.data.startsWith(v));
       if (diasDoMes.length > 0 && !dataSel.startsWith(v)) {
-        setDataSel(diasDoMes[diasDoMes.length - 1].data);
+        trocarDataManual(diasDoMes[diasDoMes.length - 1].data);
       }
     }
   }
@@ -240,17 +281,45 @@ export default function App() {
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm font-semibold">
-              <CalendarDays className="h-4 w-4 text-indigo-500" />
-              <input
-                type="date"
-                value={dataSel}
-                max={todayKey()}
-                onChange={(e) => e.target.value && setDataSel(e.target.value)}
-                className="bg-transparent outline-none text-sm"
-              />
-              <span className="hidden sm:inline text-slate-500 dark:text-slate-400">{toBR(dataSel)}</span>
-            </label>
+            <div className="flex flex-col gap-1">
+              <label
+                className="flex items-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm font-semibold"
+                title={dataLongaBR(dataSel)}
+              >
+                <CalendarDays className="h-4 w-4 text-indigo-500" />
+                <input
+                  type="date"
+                  value={dataSel}
+                  max={todayKey()}
+                  onChange={(e) => e.target.value && trocarDataManual(e.target.value)}
+                  className="bg-transparent outline-none text-sm"
+                  aria-label="Data do lançamento (preenchida automaticamente com hoje)"
+                />
+                <span className="hidden sm:inline text-slate-500 dark:text-slate-400">{toBR(dataSel)}</span>
+              </label>
+              <div className="flex items-center gap-1.5">
+                {!dataManual && isHoje(dataSel) ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-300">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                    Hoje · automática
+                  </span>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-300">
+                      {dataLongaBR(dataSel)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={voltarParaHoje}
+                      className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-white shadow hover:bg-indigo-500"
+                      title="Voltar para a data automática de hoje"
+                    >
+                      Hoje
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
             <input
               value={responsavel}
               onChange={(e) => setResponsavel(e.target.value)}
@@ -291,7 +360,16 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6">
-        {/* Filtro global por regional */}
+        {/* Aba de seleção de unidade — somente Ribas ou Água Clara */}
+        <div className="mb-4">
+          <SeletorUnidade
+            value={regionalFiltro === 'agua-clara' ? 'agua-clara' : 'ribas'}
+            onChange={(unidade) => setRegionalFiltro(unidade)}
+            carros={carros}
+            colabs={colabs}
+          />
+        </div>
+        {/* Filtro global por regional (visão consolidada + unidades) */}
         <div className="mb-5">
           <FiltroRegional value={regionalFiltro} onChange={setRegionalFiltro} carros={carros} colabs={colabs} />
           {regionalFiltro !== 'todas' && (
@@ -585,7 +663,7 @@ export default function App() {
                 {histFiltradoMes.map((h) => (
                   <button
                     key={h.data}
-                    onClick={() => { setDataSel(h.data); setTab('operacao'); }}
+                    onClick={() => { trocarDataManual(h.data); setTab('operacao'); }}
                     className={`flex min-w-[76px] flex-1 flex-col items-center gap-1.5 rounded-2xl p-3 transition-all hover:scale-105 ${h.data === dataSel ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 dark:bg-slate-800'}`}
                   >
                     <span className="text-[10px] font-bold">{toBR(h.data).slice(0, 5)}</span>
@@ -626,7 +704,7 @@ export default function App() {
             carros={carros}
             regionalFiltro={regionalFiltro}
             onRegionalChange={setRegionalFiltro}
-            onVerDia={(data) => { setDataSel(data); setTab('operacao'); }}
+            onVerDia={(data) => { trocarDataManual(data); setTab('operacao'); }}
           />
         )}
       </main>

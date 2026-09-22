@@ -175,6 +175,27 @@ export const todayKey = (): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Data automática de entrada no aplicativo — sempre o dia atual local (yyyy-mm-dd). */
+export const dataAutomaticaHoje = (): string => todayKey();
+
+/** True se a data informada é hoje (usado para selo "Hoje · automática"). */
+export const isHoje = (iso: string): boolean => iso === todayKey();
+
+/** Nome do dia da semana em pt-BR para uma chave yyyy-mm-dd. */
+export const diaSemanaBR = (iso: string): string => {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString('pt-BR', { weekday: 'long' });
+};
+
+/** Data longa em pt-BR: "terça-feira · 22/09/2026". */
+export const dataLongaBR = (iso: string): string => {
+  const sem = diaSemanaBR(iso);
+  const cap = sem ? sem.charAt(0).toUpperCase() + sem.slice(1) : '';
+  return cap ? `${cap} · ${toBR(iso)}` : toBR(iso);
+};
+
 export const toBR = (iso: string): string => {
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
